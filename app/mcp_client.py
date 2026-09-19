@@ -11,6 +11,7 @@ from app.reliability.retry import ToolFailure, with_retry
 from app.contracts import AgentError
 
 TOOL_SERVER = {
+    "calendar_health": "calendar",
     "check_availability": "calendar", "propose_slots": "calendar", "create_event": "calendar",
     "modify_event": "calendar", "cancel_event": "calendar",
     "send_lead_summary": "email", "update_lead_summary": "email",

@@ -4,11 +4,12 @@ Needs a filled .env, both MCP servers running, and an ingested corpus:
     pytest tests/test_acceptance.py -s
 Each test prints what a grader needs to see.
 """
-import asyncio, os, uuid
+import asyncio, uuid
 import pytest
 
 from app.agents.orchestrator import orchestrator
 from app.mcp_client import hub
+from app.observability.logger import new_trace_id
 from app.state.store import store
 
 pytestmark = pytest.mark.asyncio
@@ -96,12 +97,30 @@ async def test_7_guardrail_blocks_injection():
     assert "system prompt" not in out["reply"].lower()
 
 
-@pytest.mark.skipif(os.getenv("SIMULATE_CALENDAR_OUTAGE") != "1",
-                    reason="restart the calendar MCP server with SIMULATE_CALENDAR_OUTAGE=1")
 async def test_8_tool_failure_falls_back_honestly():
+    """Needs the calendar MCP server restarted with SIMULATE_CALENDAR_OUTAGE=1.
+
+    The flag only takes effect in the server process, so testing this process's environment skipped
+    the test even when the server had been restarted correctly. Ask the server instead.
+    """
+    try:
+        health = await hub.call("calendar_health", {}, trace_id=new_trace_id(), agent="test")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"calendar MCP server unreachable: {exc}")
+    if health.get("simulating") != "outage":
+        pytest.skip('restart the calendar MCP server with SIMULATE_CALENDAR_OUTAGE=1 '
+                    '(PowerShell: $env:SIMULATE_CALENDAR_OUTAGE="1")')
+
     out = await orchestrator.handle(key(), "book me a call tomorrow", "Asia/Kolkata")
     print("\nFALLBACK:", out["reply"])
-    assert "couldn't" in out["reply"].lower() or "email" in out["reply"].lower()
+    reply = out["reply"].lower()
+    # FR-8.4 is about the visitor learning what happened. Asserting only on "email" passed even when
+    # the guardrail had swapped the outage notice for generic copy that hid the failure entirely.
+    assert out.get("blocked") is not True, "the honest failure notice must reach the visitor (FR-8.4)"
+    assert any(w in reply for w in ("couldn't", "could not", "can't", "unable")), \
+        f"reply does not say anything failed: {out['reply']}"
+    assert any(w in reply for w in ("email", "follow up", "get back")), \
+        f"reply does not say what happens next: {out['reply']}"
 
 
 async def test_9_full_trace_is_recorded():

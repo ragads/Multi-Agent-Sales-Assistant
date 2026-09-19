@@ -4,7 +4,7 @@ import asyncio, json
 from datetime import datetime, timezone
 
 from app.config import settings
-from app.contracts import AgentRequest, AgentResponse, GuardrailVerdict, SessionState
+from app.contracts import AgentRequest, AgentResponse, SessionState
 from app.agents import guardrail, lead_summary, scheduler, search
 from app.llm import complete_json
 from app.observability.logger import log_event, new_trace_id, timer
@@ -117,21 +117,21 @@ class Orchestrator:
             )
 
             # ---- 5. outbound guardrail, owned here only (FR-3.8, FR-7.1) ----
-            # A response that already carries a structured error (FR-8.3) reached the visitor through
-            # an agent's own hardcoded reliability fallback (FR-8.1) - a static, developer-approved
-            # string, not fresh LLM generation - so it is exempt from re-screening. Re-running it
-            # through the free-form outbound classifier has repeatedly produced spurious blocks (e.g.
-            # objecting to "a rough time" or to "confirm by email today"), which only replaces an
-            # honest failure explanation (FR-8.4) with a less informative one.
-            has_fallback = any(r.error is not None for r in responses)
-            if has_fallback:
-                outbound = GuardrailVerdict(verdict="allow", category="none",
-                                            reason="developer-authored reliability fallback (FR-8.1)")
+            # Tell it what kind of turn this is. A decline and a booking confirmation both have no
+            # retrieved context, and judging them by the groundedness rule blocks correct replies.
+            if any(r.error or (r.output and (r.output.get("manual_followup") or r.output.get("queued")))
+                   for r in responses):
+                kind = "failure"
+            elif any(r.output and r.output.get("declined") for r in responses):
+                kind = "decline"
+            elif context:
+                kind = "answer"
             else:
-                outbound = await guardrail.check_outbound(req, draft, context=context)
-                if outbound.verdict == "block":
-                    draft = outbound.safe_fallback or draft
-                    slots = []
+                kind = "action"
+            outbound = await guardrail.check_outbound(req, draft, context=context, kind=kind)
+            if outbound.verdict == "block":
+                draft = outbound.safe_fallback or draft
+                slots = []
 
             # ---- 6. merge state ----
             for r in responses:
@@ -161,6 +161,7 @@ class Orchestrator:
                                      "intents": intents,
                                      "classifier_reasoning": cls.get("reasoning"),
                                      "guardrail_outbound": outbound.verdict,
+                                     "guardrail_kind": kind,
                                      "guardrail_category": outbound.category,
                                      "confidences": [r.confidence for r in responses]},
                             latency_ms=turn["ms"])

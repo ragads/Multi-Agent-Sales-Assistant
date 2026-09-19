@@ -63,6 +63,30 @@ class Connection:
         else:
             await self.execute("commit")
 
+    async def set_scope(self, *, visitor_key: str | None = None, session_id=None) -> None:
+        """Stamp this connection with the request it is serving, for the RLS policies to read.
+
+        The policies in sql/004_rls_policies.sql filter every row against app.visitor_key and
+        app.session_id, so a statement that forgets its WHERE clause returns nothing instead of
+        another visitor's conversation. Connections run with autocommit on, which means a
+        transaction-local set_config would be gone by the next statement - these are set at
+        session level and cleared again in Pool.acquire()'s finally block.
+        """
+        await self.execute(_SET_SCOPE, visitor_key or "", str(session_id) if session_id else "")
+
+
+_SET_SCOPE = (
+    "select set_config('app.visitor_key', $1, false), set_config('app.session_id', $2, false)"
+)
+
+
+def _clear_scope(raw) -> None:
+    with raw.cursor() as cur:
+        cur.execute(
+            "select set_config('app.visitor_key', '', false), "
+            "       set_config('app.session_id', '', false)"
+        )
+
 
 class Pool:
     def __init__(self, pool: ThreadedConnectionPool, size: int) -> None:
@@ -70,16 +94,25 @@ class Pool:
         self._slots = asyncio.Semaphore(size)
 
     @asynccontextmanager
-    async def acquire(self):
+    async def acquire(self, *, visitor_key: str | None = None, session_id=None):
         await self._slots.acquire()
         raw = None
         try:
             raw = await asyncio.to_thread(self._pool.getconn)
             raw.autocommit = True
-            yield Connection(raw)
+            con = Connection(raw)
+            await con.set_scope(visitor_key=visitor_key, session_id=session_id)
+            yield con
         finally:
             if raw is not None:
-                await asyncio.to_thread(self._pool.putconn, raw)
+                # A connection whose scope cannot be cleared must never be handed to the next
+                # request carrying the previous visitor's scope - drop it instead.
+                cleared = True
+                try:
+                    await asyncio.to_thread(_clear_scope, raw)
+                except Exception:
+                    cleared = False
+                await asyncio.to_thread(self._pool.putconn, raw, None, not cleared)
             self._slots.release()
 
     async def close(self) -> None:
