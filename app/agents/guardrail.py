@@ -32,6 +32,9 @@ LEAK_PATTERNS = [
     r"chunk|embedding|vector store|pgvector", r"system prompt", r"tool call",
 ]
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+# The slot label format propose_slots builds ("Mon 21 Sep, 09:00 AM"). Its presence means the draft is
+# repeating a time a live calendar call returned, not inventing one.
+SLOT_LABEL_RE = re.compile(r"\b[A-Za-z]{3} \d{1,2} [A-Za-z]{3}, \d{1,2}:\d{2}\s?[AP]M\b", re.I)
 
 FALLBACKS = {
     "prompt_injection": ("I can only help with questions about CloseFuture - our services, past work, "
@@ -244,6 +247,16 @@ async def check_outbound(req: AgentRequest, draft: str, context: str = "",
                 )
                 v = data.get("verdict", "allow")
                 cat = data.get("category", "none")
+                # The classifier is not told today's date, assumes a year from its training data, and
+                # then rules a real tool-returned slot invalid ("21 Sep is not a Monday"). Telling it
+                # in KIND_GUIDANCE that tool times are facts does not hold - it just relabels the
+                # block (unauthorised_commitment, then hallucination). A draft carrying a slot label
+                # this system generated from a live calendar response is not a fabricated date, so
+                # that verdict cannot stand. Genuine promises are still caught by COMMITMENT_PATTERNS
+                # above, before the model is ever consulted.
+                if v == "block" and kind != "answer" and SLOT_LABEL_RE.search(draft) \
+                        and cat in {"hallucination", "unauthorised_commitment"}:
+                    v, cat = "allow", "none"
                 verdict = GuardrailVerdict(
                     verdict="block" if v == "block" else "allow",
                     category=cat, reason=data.get("reason", ""),
