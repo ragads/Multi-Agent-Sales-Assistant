@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+service-account.json
+*.pdf
+reqs.txt
+project-overview.html

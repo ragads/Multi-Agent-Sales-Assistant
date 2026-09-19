@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CloseFuture assistant</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 250'%3E%3Crect width='250' height='250' rx='45' fill='%23639F2F'/%3E%3Cg fill='%23F8F0E2'%3E%3Crect x='41' y='42' width='40' height='168'/%3E%3Crect x='93' y='42' width='116' height='39'/%3E%3Crect x='93' y='93' width='116' height='117'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Urbanist:wght@700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#f8f0e2;--panel:#fffaf0;--line:#e2d8c3;--ink:#0f1f00;--muted:#515b41;--accent:#619E2F;--accent2:#aaf255}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--ink);overflow:hidden}
+
+  /* ---------- animated backdrop ---------- */
+  #cf-bg{position:fixed;inset:0;z-index:0;overflow:hidden;
+    background:radial-gradient(1200px 700px at 20% 10%,#efe4cc 0%,transparent 60%),
+               radial-gradient(900px 600px at 90% 90%,#e3f1c8 0%,transparent 60%),var(--bg)}
+  #cf-bg::before{content:"";position:absolute;inset:-50%;
+    background-image:linear-gradient(#619e2f26 1px,transparent 1px),linear-gradient(90deg,#619e2f26 1px,transparent 1px);
+    background-size:56px 56px;transform:perspective(700px) rotateX(58deg) translateY(0);
+    animation:grid 6s linear infinite;mask-image:radial-gradient(closest-side,#000 30%,transparent 90%)}
+  @keyframes grid{to{background-position:0 56px}}
+  .orb{position:absolute;border-radius:50%;filter:blur(70px);opacity:.55;animation:float 14s ease-in-out infinite}
+  .o1{width:380px;height:380px;background:#aaf255;left:-80px;top:-60px}
+  .o2{width:320px;height:320px;background:#619E2F;right:8%;top:30%;animation-delay:-5s;opacity:.35}
+  .o3{width:300px;height:300px;background:#cdeda4;left:35%;bottom:-120px;animation-delay:-9s;opacity:.4}
+  @keyframes float{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(50px,40px) scale(1.12)}66%{transform:translate(-40px,25px) scale(.92)}}
+  #cf-particles{position:absolute;inset:0;width:100%;height:100%}
+
+  /* ---------- hero branding ---------- */
+  #cf-hero{position:fixed;left:6vw;top:50%;transform:translateY(-50%);z-index:1;max-width:520px;animation:rise .9s ease both}
+  #cf-hero .logo{display:flex;align-items:center;gap:14px}
+  #cf-hero .mark{width:64px;height:64px;border-radius:12px;display:block;
+    box-shadow:0 0 34px #619e2f66;animation:pulse 3s ease-in-out infinite}
+  .mark svg{width:100%;height:100%;display:block}
+  @keyframes pulse{50%{box-shadow:0 0 56px #aaf255cc}}
+  #cf-hero h1{margin:0;font-family:Urbanist,Inter,system-ui,sans-serif;font-weight:700;font-size:clamp(34px,5vw,58px);letter-spacing:-.5px;
+    color:#0f1f00}
+  #cf-hero p{color:var(--muted);font-size:18px;line-height:1.55;margin:18px 0 0}
+  #cf-hero .tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  #cf-hero .tags span{border:1px solid var(--line);background:#fffaf0aa;backdrop-filter:blur(6px);
+    padding:6px 12px;border-radius:999px;font-size:13px;color:#1f350d}
+  @keyframes rise{from{opacity:0;transform:translateY(-46%)}to{opacity:1;transform:translateY(-50%)}}
+  @media (max-width:900px){#cf-hero{display:none}}
+
+  /* ---------- launcher + panel ---------- */
+  #cf-bubble{position:fixed;right:22px;bottom:22px;width:60px;height:60px;border-radius:50%;z-index:3;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0f1f00;border:0;font-size:25px;cursor:pointer;
+    box-shadow:0 8px 28px #619e2f88;animation:ring 2.6s ease-out infinite;transition:transform .2s}
+  #cf-bubble:hover{transform:scale(1.08)}
+  @keyframes ring{0%{box-shadow:0 8px 28px #619e2f88,0 0 0 0 #619e2f88}100%{box-shadow:0 8px 28px #619e2f88,0 0 0 22px #619e2f00}}
+  #cf-panel{position:fixed;right:22px;bottom:96px;width:390px;max-width:94vw;height:580px;max-height:78vh;z-index:2;
+    background:#fffaf0ee;backdrop-filter:blur(14px);border:1px solid #d9cdb2;border-radius:16px;display:flex;flex-direction:column;
+    overflow:hidden;box-shadow:0 24px 70px #0f1f0044,0 0 0 1px #619e2f33;
+    opacity:0;transform:translateY(24px) scale(.96);pointer-events:none;transition:opacity .3s,transform .3s}
+  #cf-panel.open{opacity:1;transform:none;pointer-events:auto}
+  header{padding:12px 14px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,#f6eedb,#e9f3d4);
+    display:flex;align-items:center;gap:11px}
+  header .mark{width:38px;height:38px;flex:none}
+  header b{display:block;font-size:16px;letter-spacing:.2px;font-family:Urbanist,Inter,sans-serif;font-weight:700}
+  header span{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  header span::before{content:"";width:7px;height:7px;border-radius:50%;background:#619E2F;box-shadow:0 0 8px #aaf255;animation:blink 2s infinite}
+  @keyframes blink{50%{opacity:.35}}
+  #cf-log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
+  .msg{padding:9px 12px;border-radius:12px;font-size:14px;line-height:1.45;max-width:86%;white-space:pre-wrap;animation:pop .3s ease both}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
+  .visitor{align-self:flex-end;background:linear-gradient(135deg,#619E2F,#4d8023);color:#fff;border-bottom-right-radius:3px}
+  .bot{align-self:flex-start;background:#f1e8d4;border:1px solid #e2d8c3;border-bottom-left-radius:3px}
+  .slots{display:flex;flex-direction:column;gap:6px;align-self:flex-start;max-width:86%;animation:pop .3s ease both}
+  .slot{background:#f6f0e0;border:1px solid var(--accent);color:var(--ink);padding:8px 10px;border-radius:8px;
+    font-size:13px;cursor:pointer;text-align:left;transition:.15s}
+  .slot:hover{background:#e9f3d4;transform:translateX(3px)}
+  .status{align-self:flex-start;background:#f1e8d4;border-radius:12px;padding:10px 14px;display:flex;gap:5px}
+  .status i{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:dot 1.2s infinite}
+  .status i:nth-child(2){animation-delay:.2s}.status i:nth-child(3){animation-delay:.4s}
+  @keyframes dot{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-5px);opacity:1}}
+  footer{border-top:1px solid var(--line);padding:10px;display:flex;gap:8px;background:#f6eedb}
+  input{flex:1;border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--ink);
+    background:#fff;font-size:14px;transition:border-color .2s,box-shadow .2s}
+  input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px #619e2f33}
+  button.send{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0f1f00;border:0;border-radius:8px;
+    padding:0 16px;cursor:pointer;font-weight:600;transition:transform .15s}
+  button.send:hover{transform:translateY(-1px)}
+  .powered{text-align:center;font-size:11px;color:#7a8467;padding:0 0 8px;background:#f6eedb}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="cf-logo" viewBox="0 0 250 250"><rect width="250" height="250" rx="45" fill="#639F2F"/><g fill="#F8F0E2"><rect x="41" y="42" width="40" height="168"/><rect x="93" y="42" width="116" height="39"/><rect x="93" y="93" width="116" height="117"/></g></symbol></svg>
+
+<div id="cf-bg">
+  <div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>
+  <canvas id="cf-particles"></canvas>
+</div>
+
+<section id="cf-hero">
+  <div class="logo"><div class="mark"><svg viewBox="0 0 250 250"><use href="#cf-logo"/></svg></div><h1>CloseFuture</h1></div>
+  <p>An AI product studio that ships web and mobile apps in 4&ndash;6 weeks. Ask our assistant about our work, pricing and process &ndash; or book a call with Baskaran.</p>
+  <div class="tags"><span>Web &amp; Mobile Apps</span><span>AI Products</span><span>4&ndash;6 Week MVPs</span></div>
+</section>
+
+<button id="cf-bubble" aria-label="Chat with CloseFuture">&#128172;</button>
+
+<div id="cf-panel" role="dialog" aria-label="CloseFuture assistant">
+  <header>
+    <div class="mark"><svg viewBox="0 0 250 250"><use href="#cf-logo"/></svg></div>
+    <div><b>CloseFuture assistant</b><span>Online &middot; ask about our work, or book a call</span></div>
+  </header>
+  <div id="cf-log"></div>
+  <footer>
+    <input id="cf-input" placeholder="Ask something..." autocomplete="off">
+    <button class="send" id="cf-send">Send</button>
+  </footer>
+  <div class="powered">CloseFuture &middot; AI assistant</div>
+</div>
+
+<script>
+const API = (window.CF_API_BASE || (location.protocol.startsWith("http") ? location.origin : "http://localhost:8000")) + "/api/chat";
+
+// FR-2.5: one persistent visitor key across reloads and new tabs.
+function visitorKey(){
+  let k = localStorage.getItem("cf_visitor_key");
+  if(!k){ k = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+Math.random()));
+          localStorage.setItem("cf_visitor_key", k); }
+  return k;
+}
+const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;   // FR-5.4
+
+const log = document.getElementById("cf-log");
+const input = document.getElementById("cf-input");
+const panel = document.getElementById("cf-panel");
+
+function openPanel(){
+  panel.classList.add("open");
+  if(!log.dataset.greeted){
+    log.dataset.greeted = "1";
+    add("bot","Hi! I'm the CloseFuture assistant. I can tell you about our work and pricing, or book a 30-minute call with Baskaran. What would you like?");
+  }
+  input.focus();
+}
+document.getElementById("cf-bubble").onclick = () => {
+  panel.classList.contains("open") ? panel.classList.remove("open") : openPanel();
+};
+setTimeout(openPanel, 500);   // open on load so the page is never an empty screen
+
+function add(cls, text){
+  const d = document.createElement("div");
+  d.className = "msg " + cls; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+function status(){
+  const d = document.createElement("div"); d.className="status"; d.innerHTML="<i></i><i></i><i></i>";
+  log.appendChild(d); log.scrollTop = log.scrollHeight; return d;
+}
+function renderSlots(slots){
+  if(!slots || !slots.length) return;
+  const wrap = document.createElement("div"); wrap.className = "slots";
+  slots.forEach((s,i) => {
+    const b = document.createElement("button");
+    b.className = "slot"; b.textContent = (i+1) + ".  " + (s.visitor_label || s.start_iso);
+    b.onclick = () => { send("I'll take option " + (i+1) + " - " + (s.visitor_label||s.start_iso)); };
+    wrap.appendChild(b);
+  });
+  log.appendChild(wrap); log.scrollTop = log.scrollHeight;
+}
+
+let busy = false;
+async function send(text){
+  if(busy || !text.trim()) return;
+  busy = true; add("visitor", text); input.value = "";
+  const s = status();
+  try{
+    const r = await fetch(API, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({visitor_key: visitorKey(), message: text, visitor_tz: TZ})
+    });
+    if(!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    s.remove();
+    add("bot", data.reply);
+    renderSlots(data.slots);
+  }catch(e){
+    s.remove();
+    add("bot","I couldn't reach our assistant just now. Please try again in a moment, or email baskaran@closefuture.io.");
+  }finally{ busy = false; input.focus(); }
+}
+
+document.getElementById("cf-send").onclick = () => send(input.value);
+input.addEventListener("keydown", e => { if(e.key === "Enter") send(input.value); });
+
+// ---------- drifting particle network ----------
+(function(){
+  const c = document.getElementById("cf-particles"), x = c.getContext("2d");
+  let w, h, pts = [];
+  function size(){ w = c.width = innerWidth; h = c.height = innerHeight;
+    pts = Array.from({length: Math.min(70, Math.floor(w*h/22000))}, () =>
+      ({x:Math.random()*w, y:Math.random()*h, vx:(Math.random()-.5)*.4, vy:(Math.random()-.5)*.4})); }
+  addEventListener("resize", size); size();
+  function tick(){
+    x.clearRect(0,0,w,h);
+    for(const p of pts){
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.x<0||p.x>w) p.vx*=-1; if(p.y<0||p.y>h) p.vy*=-1;
+      x.fillStyle="#619E2F"; x.globalAlpha=.7; x.beginPath(); x.arc(p.x,p.y,1.6,0,7); x.fill();
+    }
+    for(let i=0;i<pts.length;i++) for(let j=i+1;j<pts.length;j++){
+      const d=Math.hypot(pts[i].x-pts[j].x, pts[i].y-pts[j].y);
+      if(d<130){ x.globalAlpha=(1-d/130)*.35; x.strokeStyle="#619E2F";
+        x.beginPath(); x.moveTo(pts[i].x,pts[i].y); x.lineTo(pts[j].x,pts[j].y); x.stroke(); }
+    }
+    requestAnimationFrame(tick);
+  }
+  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) tick();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+services:
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    env_file: [.env]
+    depends_on: [calendar-mcp, email-mcp]
+
+  calendar-mcp:
+    build: .
+    command: python -m app.mcp_servers.calendar_server
+    ports: ["8931:8931"]
+    env_file: [.env]
+
+  email-mcp:
+    build: .
+    command: python -m app.mcp_servers.email_server
+    ports: ["8932:8932"]
+    env_file: [.env]
