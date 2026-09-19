@@ -109,7 +109,18 @@ class Orchestrator:
             )
 
             # ---- 5. outbound guardrail, owned here only (FR-3.8, FR-7.1) ----
-            outbound = await guardrail.check_outbound(req, draft, context=context)
+            # Tell it what kind of turn this is. A decline and a booking confirmation both have no
+            # retrieved context, and judging them by the groundedness rule blocks correct replies.
+            if any(r.error or (r.output and (r.output.get("manual_followup") or r.output.get("queued")))
+                   for r in responses):
+                kind = "failure"
+            elif any(r.output and r.output.get("declined") for r in responses):
+                kind = "decline"
+            elif context:
+                kind = "answer"
+            else:
+                kind = "action"
+            outbound = await guardrail.check_outbound(req, draft, context=context, kind=kind)
             if outbound.verdict == "block":
                 draft = outbound.safe_fallback or draft
                 slots = []
@@ -142,6 +153,7 @@ class Orchestrator:
                                      "intents": intents,
                                      "classifier_reasoning": cls.get("reasoning"),
                                      "guardrail_outbound": outbound.verdict,
+                                     "guardrail_kind": kind,
                                      "guardrail_category": outbound.category,
                                      "confidences": [r.confidence for r in responses]},
                             latency_ms=turn["ms"])

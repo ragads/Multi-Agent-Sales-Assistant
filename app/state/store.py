@@ -18,9 +18,10 @@ class Store:
     def __init__(self) -> None:
         self.pool: Optional[db.Pool] = None
 
-    async def connect(self) -> None:
+    async def connect(self, dsn: str | None = None) -> None:
+        """Defaults to the least-privilege runtime role. Only ingest passes the admin DSN."""
         if self.pool is None:
-            self.pool = await db.create_pool(settings.SUPABASE_DB_URL, min_size=1, max_size=10)
+            self.pool = await db.create_pool(dsn or settings.SUPABASE_DB_URL, min_size=1, max_size=10)
 
     async def close(self) -> None:
         if self.pool:
@@ -31,7 +32,7 @@ class Store:
 
     async def get_or_create_by_visitor_key(self, visitor_key: str, visitor_tz: str | None = None) -> SessionState:
         """FR-2.3 / FR-2.5: a returning visitor resumes; only a genuinely new key starts fresh."""
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(visitor_key=visitor_key) as con:
             row = await con.fetchrow(
                 """
                 select * from sessions
@@ -59,11 +60,13 @@ class Store:
                 row = await con.fetchrow(
                     "update sessions set visitor_tz = $2 where id = $1 returning *", row["id"], visitor_tz
                 )
+            # The session is resolved now, so narrow the RLS scope to it before touching messages.
+            await con.set_scope(visitor_key=visitor_key, session_id=row["id"])
             history = await self._history(con, row["id"])
         return self._to_state(row, history)
 
     async def get(self, session_id: str) -> Optional[SessionState]:
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(session_id=session_id) as con:
             row = await con.fetchrow("select * from sessions where id = $1", uuid.UUID(session_id))
             if row is None:
                 return None
@@ -99,7 +102,7 @@ class Store:
     async def append_message(self, session_id: str, role: str, content: str,
                              agent: str | None = None, metadata: dict | None = None) -> None:
         """Append-only: concurrent turns can never clobber each other (FR-2.6)."""
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(session_id=session_id) as con:
             await con.execute(
                 "insert into messages (session_id, role, content, agent, metadata) values ($1,$2,$3,$4,$5)",
                 uuid.UUID(session_id), role, content, agent, json.dumps(metadata or {}),
@@ -110,7 +113,7 @@ class Store:
         allowed = {"status", "visitor_tz", "qualification", "agents_run", "booking", "summary_sent"}
         patch = {k: v for k, v in patch.items() if k in allowed}
 
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(session_id=session_id) as con:
             current = await con.fetchrow("select summary_sent from sessions where id=$1", uuid.UUID(session_id))
             # FR-6.7: summary_sent is immutable once written
             if current and current["summary_sent"] is not None and "summary_sent" in patch:
@@ -153,7 +156,7 @@ class Store:
     async def session_lock(self, session_id: str):
         """Postgres advisory lock: two long tool calls for one session cannot interleave (FR-2.6)."""
         key = abs(hash(session_id)) % (2 ** 31)
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(session_id=session_id) as con:
             await con.execute("select pg_advisory_lock($1)", key)
             try:
                 yield con
@@ -163,16 +166,12 @@ class Store:
     # ---------------- sweeper helpers ----------------
 
     async def idle_sessions(self, minutes: int) -> list[str]:
+        # No visitor is attached to a sweeper tick, so there is no request scope for the
+        # session policies to match. idle_sessions() is a SECURITY DEFINER function that
+        # returns ids and nothing else; the caller then re-enters the normal policy path
+        # once per session. See sql/004_rls_policies.sql.
         async with self.pool.acquire() as con:
-            rows = await con.fetch(
-                """
-                select id from sessions
-                 where status = 'active'
-                   and summary_sent is null
-                   and last_activity_at < now() - ($1 || ' minutes')::interval
-                """,
-                str(minutes),
-            )
+            rows = await con.fetch("select id from idle_sessions($1)", minutes)
         return [str(r["id"]) for r in rows]
 
     async def expire_sessions(self) -> int:
@@ -182,7 +181,7 @@ class Store:
     # ---------------- logs ----------------
 
     async def insert_log(self, event_type, trace_id, session_id, agent, payload, latency_ms) -> None:
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(session_id=session_id) as con:
             await con.execute(
                 """insert into logs (session_id, trace_id, event_type, agent, payload, latency_ms)
                    values ($1,$2,$3,$4,$5,$6)""",
@@ -191,7 +190,7 @@ class Store:
             )
 
     async def trace(self, session_id: str) -> list[dict[str, Any]]:
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(session_id=session_id) as con:
             rows = await con.fetch(
                 "select * from logs where session_id = $1 order by id", uuid.UUID(session_id)
             )
@@ -201,7 +200,7 @@ class Store:
 
     async def outbox_claim(self, session_id: str, payload: dict) -> tuple[str, bool]:
         """Returns (row_id, is_new). Unique on session_id => exactly-once (FR-6.6)."""
-        async with self.pool.acquire() as con:
+        async with self.pool.acquire(session_id=session_id) as con:
             row = await con.fetchrow("select * from email_outbox where session_id = $1", uuid.UUID(session_id))
             if row:
                 await con.execute(
@@ -215,9 +214,11 @@ class Store:
             )
             return str(row["id"]), True
 
-    async def outbox_mark(self, row_id: str, status: str, provider_id: str | None = None,
-                          error: str | None = None) -> None:
-        async with self.pool.acquire() as con:
+    async def outbox_mark(self, row_id: str, session_id: str, status: str,
+                          provider_id: str | None = None, error: str | None = None) -> None:
+        # session_id is required because the email_outbox policies are session-scoped: without
+        # it the UPDATE matches no row and the send would be silently forgotten.
+        async with self.pool.acquire(session_id=session_id) as con:
             await con.execute(
                 """update email_outbox
                       set status=$2, provider_id=coalesce($3, provider_id),
@@ -227,12 +228,10 @@ class Store:
             )
 
     async def outbox_pending(self) -> list[dict[str, Any]]:
+        # Cross-session scan with no visitor attached - same reasoning as idle_sessions().
+        # The retry predicate lives inside the function, not here.
         async with self.pool.acquire() as con:
-            rows = await con.fetch(
-                """select * from email_outbox
-                    where status = 'pending' and attempts < 12
-                      and updated_at < now() - interval '2 minutes'"""
-            )
+            rows = await con.fetch("select * from outbox_pending()")
         return [dict(r) for r in rows]
 
 

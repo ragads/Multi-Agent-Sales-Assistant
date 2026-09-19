@@ -25,7 +25,17 @@ def vec_literal(v: list[float]) -> str:
 
 
 async def main() -> None:
-    await store.connect()
+    # The runtime role has SELECT on `chunks` and nothing at all on `documents`, so a
+    # compromised chat request cannot poison the knowledge base. Rewriting the corpus is an
+    # operator task and connects as the owner.
+    if not settings.SUPABASE_ADMIN_DB_URL:
+        raise SystemExit(
+            "\n[INGEST] SUPABASE_ADMIN_DB_URL is not set.\n"
+            "Ingestion writes to `documents` and `chunks`, which the runtime role is not\n"
+            "permitted to do. Put the owner (postgres) connection string in\n"
+            "SUPABASE_ADMIN_DB_URL - see .env.example.\n"
+        )
+    await store.connect(settings.SUPABASE_ADMIN_DB_URL)
     corpus = load_corpus()
     print(f"{'document':46} {'chunks':>7} {'avg tokens':>11}")
     print("-" * 68)
@@ -49,7 +59,7 @@ async def main() -> None:
                     await con.execute(
                         """insert into chunks
                            (document_id, chunk_index, content, category, source_ref, token_count, embedding)
-                           values ($1,$2,$3,$4,$5,$6,$7::vector)""",
+                           values ($1,$2,$3,$4,$5,$6,$7::extensions.vector)""",
                         doc_id, ch.index, ch.content, ch.category, ch.source_ref,
                         ch.token_count, vec_literal(vec),
                     )

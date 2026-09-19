@@ -100,6 +100,36 @@ the classifier is unavailable we substitute a safe fallback rather than sending 
 Inbound fails *open*, because blocking every visitor during a classifier outage is worse than letting
 an ordinary question through - the outbound check still protects what we say back.
 
+## 10a. The outbound Guardrail is told what kind of turn it is judging (FR-4.4, FR-7.4, FR-8.4)
+
+The outbound check originally judged every draft by one rule set, the central rule being "block
+anything not supported by the retrieved context chunks". That rule is correct for a retrieval-grounded
+answer and actively wrong for every other kind of turn, because two of the replies the spec *requires*
+have no context by construction:
+
+- a **decline** has no chunks precisely because retrieval found none (FR-4.4), and
+- a **failure notice** is emitted when a tool died before retrieval ever mattered (FR-8.4).
+
+Both were being blocked and replaced with generic marketing copy, so the visitor was told neither that
+the topic was unpublished nor that their booking had failed — strictly worse than the draft, and the
+exact outcome those two requirements exist to prevent.
+
+The Orchestrator now classifies each turn as `answer`, `decline`, `failure` or `action` and passes it
+to `check_outbound`. Two things follow from that label:
+
+1. **Required turns get their own prompt.** Appending "do not block this" to the permissive prompt did
+   not work — the model had already been primed with the groundedness and commitment rules and simply
+   changed which category it blocked under (`tone`, then `unauthorised_commitment`, then `leakage`,
+   then `pii`). `decline` and `failure` turns are therefore judged by `OUTBOUND_REQUIRED_SYS`, which
+   can only return `leakage` or `pii`. The categories that cannot logically apply are not on the menu.
+2. **A blocked required turn keeps an honest substitute.** `REQUIRED_FALLBACKS` replaces a blocked
+   decline with a plainer decline and a blocked failure notice with a plainer failure notice. This is
+   the structural guarantee: however the classifier behaves, and even when it is unavailable and the
+   check fails closed, the visitor still learns that something failed or that the topic is unpublished.
+   Prompt wording reduces false blocks; this is what makes the requirement hold regardless.
+
+Tone and groundedness are still enforced in full on `answer` turns, which is where they belong.
+
 ## 11. Single-provider LLM choice (OpenAI, gpt-4o-mini)
 
 The agent's reasoning and its embeddings both run on OpenAI, behind one API key. Two reasons:
@@ -120,3 +150,55 @@ The agent's reasoning and its embeddings both run on OpenAI, behind one API key.
 `config.py` validates every environment variable at import time and exits with a readable message. A
 half-configured deployment that silently mocks a calendar is exactly the prototype behaviour the FRD
 rules out.
+
+## 13. Database authorization: a least-privilege role, not the service key
+
+The project originally carried `SUPABASE_SERVICE_KEY` in `.env` and connected to Postgres as
+`postgres`. Two separate problems, one of which was invisible.
+
+The key itself was never read by any code path - there is no `supabase` client in
+`requirements.txt` and every query goes through psycopg2. It was pure liability: a credential that
+grants unrestricted, RLS-bypassing access to every table, sitting in config and in the deploy
+environment for no functional reason. It is gone.
+
+The real issue was the connection. RLS was enabled on all six tables but had zero policies, which
+reads as "locked down" and in fact was - for `anon` and `authenticated`. It was never enforced
+against the application, because a table's owner is exempt from its own row-level security and the
+app connected as the owner. The protection was accidental.
+
+`auth.uid()` is not available as a scoping key here: the widget is an anonymous embed on a public
+site and no visitor ever logs in. The unit of ownership is the session, keyed by the `visitor_key`
+the browser persists (FR-2.5). So the app now connects as `closefuture_app` - no superuser, no
+`BYPASSRLS`, owner of nothing - and `app/state/db.py` stamps each pooled connection with
+`app.visitor_key` and `app.session_id` for the request it is serving, clearing them on release and
+discarding any connection whose scope could not be cleared. The policies filter every row against
+that scope, so a query that loses its `WHERE` clause returns nothing rather than someone else's
+conversation.
+
+Three things could not be expressed as a visitor-scoped policy, and each was handled rather than
+waved through:
+
+- **The sweeper, expiry and outbox drain** run on a timer with no visitor attached, and genuinely
+  need to see across sessions. Widening the table policies to accommodate them would have made the
+  scoping decorative. Instead each gets one `SECURITY DEFINER` function of fixed shape, with a
+  pinned `search_path`, returning only what that job needs - `idle_sessions()` returns ids and
+  nothing else - and `EXECUTE` granted to the app role alone.
+- **Ingestion** rewrites `documents` and `chunks`. That is an operator task, not a request, so the
+  runtime role is read-only on `chunks` and has no access at all to `documents`; ingest connects
+  via `SUPABASE_ADMIN_DB_URL`. A compromised chat request cannot poison the knowledge base.
+- **The knowledge base read** is the one `USING (true)` policy in the file. `chunks` holds the
+  public marketing corpus already published on the website - no PII, nothing session-scoped - and
+  every turn has to search all of it. There is nothing to scope on, and a predicate there would
+  only break retrieval. It is `SELECT`-only, for one named role.
+
+`FORCE ROW LEVEL SECURITY` was considered and rejected. It would apply RLS to the owner too, which
+breaks the `SECURITY DEFINER` helpers, ingest and every future migration - and it is not a boundary
+anyone is held by, since an owner can simply `ALTER TABLE ... NO FORCE`. The boundary that matters
+is that the application no longer connects as the owner.
+
+Two hardening steps came out of the same pass. `anon` and `authenticated` were carrying
+`SELECT/INSERT/UPDATE/DELETE/TRUNCATE` on all six tables - the Supabase default for tables in
+`public` - with only the empty policy set keeping them out. Those grants are revoked, as are
+`service_role`'s: a key that is no longer issued should not still map to full table access. Nothing
+reaches these tables over PostgREST; the FastAPI backend is the only client, and the browser widget
+only ever talks to that backend.

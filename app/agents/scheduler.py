@@ -109,9 +109,11 @@ async def run(req: AgentRequest) -> AgentResponse:
                                      "action": "manual_followup_collection"}, latency_ms=t["ms"])
             return AgentResponse(
                 status="ok", agent=AGENT, error=tf.error,
+                # no same-day promise here: the spec treats a contractual timeline as an
+                # unauthorised commitment, and the outbound guardrail correctly flagged the old wording
                 output={"reply": ("I couldn't reach our calendar just now, so I don't want to promise a "
                                   "slot I can't hold. If you leave your name, email and a rough time "
-                                  "that suits you, Baskaran will confirm by email today."),
+                                  "that suits you, Baskaran will follow up by email to confirm."),
                         "manual_followup": True},
                 state_patch={"booking": {"manual_followup": True, "reason": tf.error.error_code}},
             )

@@ -19,11 +19,13 @@ async def drain() -> int:
             result = await hub.call("send_lead_summary", {"summary": payload},
                                     trace_id=trace_id, session_id=str(row["session_id"]),
                                     agent="outbox")
-            await store.outbox_mark(str(row["id"]), "sent", provider_id=result.get("provider_id"))
+            await store.outbox_mark(str(row["id"]), str(row["session_id"]), "sent",
+                                    provider_id=result.get("provider_id"))
             sent += 1
         except ToolFailure as tf:
             status = "pending" if tf.error.retryable and row["attempts"] < 11 else "failed"
-            await store.outbox_mark(str(row["id"]), status, error=tf.error.message)
+            await store.outbox_mark(str(row["id"]), str(row["session_id"]), status,
+                                    error=tf.error.message)
             await log_event("retry", trace_id=trace_id, session_id=str(row["session_id"]),
                             agent="outbox",
                             payload={"tool": "send_lead_summary", "outcome": status,

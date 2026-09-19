@@ -23,9 +23,18 @@ class Settings(BaseSettings):
     EMBEDDING_DIMS: int = 1536
 
     # Supabase
+    # There is no SUPABASE_SERVICE_KEY here on purpose. The service-role key grants
+    # unrestricted, RLS-bypassing access to every table, and nothing in this app ever
+    # needed it: all database work goes over Postgres directly. See DECISIONS.md.
     SUPABASE_URL: str
-    SUPABASE_SERVICE_KEY: str
+    # Runtime connection, as the least-privilege `closefuture_app` role. That role is not
+    # the owner of any table, so every statement it runs is filtered by the policies in
+    # sql/004_rls_policies.sql. Must be the session-mode pooler (port 5432): the booking
+    # flow holds a pg_advisory_lock across statements and needs a pinned connection.
     SUPABASE_DB_URL: str
+    # Owner connection. Used only by `python -m app.rag.ingest`, which rewrites the
+    # knowledge base, and by the SQL in sql/. Never used to serve a request.
+    SUPABASE_ADMIN_DB_URL: str = ""
 
     # Google Calendar
     GOOGLE_CALENDAR_ID: str
@@ -52,6 +61,15 @@ class Settings(BaseSettings):
     MCP_EMAIL_URL: str = "http://localhost:8932/mcp"
     LOG_LEVEL: str = "INFO"
 
+    # Access control (see app/security.py)
+    APP_SECRET: str = ""            # signs conversation links; falls back to a DB-password hash
+    ADMIN_TOKEN: str = ""           # required for /api/session/{id}/end and /api/mcp/reload; blank = disabled
+    ALLOWED_ORIGINS: str = ""       # extra comma-separated origins allowed to call the API (your website)
+    RATE_VISITOR_PER_MIN: int = 8
+    RATE_VISITOR_PER_DAY: int = 120
+    RATE_IP_PER_MIN: int = 30
+    RATE_GLOBAL_PER_DAY: int = 1500  # hard stop on total chat turns - protects the OpenAI budget
+
     # Retrieval tuning (see DECISIONS.md)
     CHUNK_CHARS: int = 700
     CHUNK_OVERLAP: int = 120
@@ -59,6 +77,12 @@ class Settings(BaseSettings):
     MIN_SIMILARITY: float = 0.35
     CONFIDENCE_FLOOR: float = 0.45
     INTENT_CONFIDENCE_FLOOR: float = 0.60
+
+    @property
+    def cors_origins(self) -> list[str]:
+        base = [self.APP_BASE_URL.rstrip("/"), "http://localhost:8000", "http://127.0.0.1:8000"]
+        extra = [o.strip().rstrip("/") for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+        return list(dict.fromkeys(base + extra))
 
     @property
     def business_start(self) -> int:

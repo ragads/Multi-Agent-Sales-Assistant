@@ -32,7 +32,7 @@ async def retrieve(query: str, *, top_k: int | None = None, category: str | None
     category = category if category in CATEGORIES else None
     async with store.pool.acquire() as con:
         rows = await con.fetch(
-            "select * from match_chunks($1::vector, $2, $3, $4)",
+            "select * from match_chunks($1::extensions.vector, $2, $3, $4)",
             literal, top_k or settings.TOP_K, category, settings.MIN_SIMILARITY,
         )
     hits = [Hit(str(r["id"]), r["content"], r["source_ref"], r["category"], float(r["similarity"]))

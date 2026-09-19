@@ -2,16 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f8f0e2">
 <title>CloseFuture assistant</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 250 250'%3E%3Crect width='250' height='250' rx='45' fill='%23639F2F'/%3E%3Cg fill='%23F8F0E2'%3E%3Crect x='41' y='42' width='40' height='168'/%3E%3Crect x='93' y='42' width='116' height='39'/%3E%3Crect x='93' y='93' width='116' height='117'/%3E%3C/g%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Urbanist:wght@700&display=swap" rel="stylesheet">
 <style>
-  :root{--bg:#f8f0e2;--panel:#fffaf0;--line:#e2d8c3;--ink:#0f1f00;--muted:#515b41;--accent:#619E2F;--accent2:#aaf255}
+  :root{--bg:#f8f0e2;--panel:#fffaf0;--line:#e2d8c3;--ink:#0f1f00;--muted:#515b41;--accent:#619E2F;--accent2:#aaf255;
+    --safe-t:env(safe-area-inset-top,0px);--safe-b:env(safe-area-inset-bottom,0px);
+    --safe-l:env(safe-area-inset-left,0px);--safe-r:env(safe-area-inset-right,0px)}
   *{box-sizing:border-box}
   html,body{height:100%}
-  body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--ink);overflow:hidden}
+  body{margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Arial;background:var(--bg);color:var(--ink);overflow:hidden;
+    -webkit-text-size-adjust:100%}
 
   /* ---------- animated backdrop ---------- */
   #cf-bg{position:fixed;inset:0;z-index:0;overflow:hidden;
@@ -43,15 +47,19 @@
   #cf-hero .tags span{border:1px solid var(--line);background:#fffaf0aa;backdrop-filter:blur(6px);
     padding:6px 12px;border-radius:999px;font-size:13px;color:#1f350d}
   @keyframes rise{from{opacity:0;transform:translateY(-46%)}to{opacity:1;transform:translateY(-50%)}}
+  @keyframes fadein{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+  #cf-cta{display:none;margin-top:22px;align-items:center;gap:9px;min-height:48px;padding:0 20px;border:0;border-radius:999px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0f1f00;font:600 16px Inter,system-ui,sans-serif;
+    cursor:pointer;box-shadow:0 8px 24px #619e2f55}
   @media (max-width:900px){#cf-hero{display:none}}
 
   /* ---------- launcher + panel ---------- */
   #cf-bubble{position:fixed;right:22px;bottom:22px;width:60px;height:60px;border-radius:50%;z-index:3;
     background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0f1f00;border:0;font-size:25px;cursor:pointer;
-    box-shadow:0 8px 28px #619e2f88;animation:ring 2.6s ease-out infinite;transition:transform .2s}
+    box-shadow:0 8px 28px #619e2f88;animation:ring 2.6s ease-out infinite;transition:transform .2s,opacity .2s}
   #cf-bubble:hover{transform:scale(1.08)}
   @keyframes ring{0%{box-shadow:0 8px 28px #619e2f88,0 0 0 0 #619e2f88}100%{box-shadow:0 8px 28px #619e2f88,0 0 0 22px #619e2f00}}
-  #cf-panel{position:fixed;right:22px;bottom:96px;width:390px;max-width:94vw;height:580px;max-height:78vh;z-index:2;
+  #cf-panel{position:fixed;right:22px;bottom:96px;width:390px;max-width:94vw;height:580px;max-height:78vh;z-index:4;
     background:#fffaf0ee;backdrop-filter:blur(14px);border:1px solid #d9cdb2;border-radius:16px;display:flex;flex-direction:column;
     overflow:hidden;box-shadow:0 24px 70px #0f1f0044,0 0 0 1px #619e2f33;
     opacity:0;transform:translateY(24px) scale(.96);pointer-events:none;transition:opacity .3s,transform .3s}
@@ -59,12 +67,17 @@
   header{padding:12px 14px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,#f6eedb,#e9f3d4);
     display:flex;align-items:center;gap:11px}
   header .mark{width:38px;height:38px;flex:none}
+  header .who{flex:1;min-width:0}
   header b{display:block;font-size:16px;letter-spacing:.2px;font-family:Urbanist,Inter,sans-serif;font-weight:700}
-  header span{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
-  header span::before{content:"";width:7px;height:7px;border-radius:50%;background:#619E2F;box-shadow:0 0 8px #aaf255;animation:blink 2s infinite}
+  header .sub{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+  header .sub::before{content:"";width:7px;height:7px;flex:none;border-radius:50%;background:#619E2F;box-shadow:0 0 8px #aaf255;animation:blink 2s infinite}
   @keyframes blink{50%{opacity:.35}}
-  #cf-log{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
-  .msg{padding:9px 12px;border-radius:12px;font-size:14px;line-height:1.45;max-width:86%;white-space:pre-wrap;animation:pop .3s ease both}
+  #cf-close{display:none;flex:none;width:40px;height:40px;margin:-4px -4px -4px 0;place-items:center;border:0;border-radius:50%;
+    background:#0f1f000d;color:var(--ink);font-size:22px;line-height:1;cursor:pointer}
+  #cf-log{flex:1;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;
+    padding:14px;display:flex;flex-direction:column;gap:10px;scroll-behavior:smooth}
+  .msg{padding:9px 12px;border-radius:12px;font-size:14px;line-height:1.45;max-width:86%;white-space:pre-wrap;
+    overflow-wrap:anywhere;animation:pop .3s ease both}
   @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
   .visitor{align-self:flex-end;background:linear-gradient(135deg,#619E2F,#4d8023);color:#fff;border-bottom-right-radius:3px}
   .bot{align-self:flex-start;background:#f1e8d4;border:1px solid #e2d8c3;border-bottom-left-radius:3px}
@@ -77,13 +90,57 @@
   .status i:nth-child(2){animation-delay:.2s}.status i:nth-child(3){animation-delay:.4s}
   @keyframes dot{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-5px);opacity:1}}
   footer{border-top:1px solid var(--line);padding:10px;display:flex;gap:8px;background:#f6eedb}
-  input{flex:1;border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--ink);
-    background:#fff;font-size:14px;transition:border-color .2s,box-shadow .2s}
+  input{flex:1;min-width:0;border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--ink);
+    background:#fff;font-size:14px;font-family:inherit;transition:border-color .2s,box-shadow .2s}
   input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px #619e2f33}
   button.send{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#0f1f00;border:0;border-radius:8px;
-    padding:0 16px;cursor:pointer;font-weight:600;transition:transform .15s}
+    padding:0 16px;cursor:pointer;font-weight:600;font-family:inherit;transition:transform .15s}
   button.send:hover{transform:translateY(-1px)}
   .powered{text-align:center;font-size:11px;color:#7a8467;padding:0 0 8px;background:#f6eedb}
+
+  /* ---------- tablets: keep the docked panel, never wider than the screen ---------- */
+  @media (min-width:641px) and (max-width:900px){
+    #cf-bubble{right:16px;bottom:16px}
+    #cf-panel{right:16px;bottom:88px;width:min(390px,calc(100vw - 32px));height:min(580px,72vh)}
+  }
+
+  /* ---------- phones (and short landscape): full-screen sheet ---------- */
+  @media (max-width:640px),(max-width:900px) and (max-height:500px){
+    html,body{height:auto;min-height:100%;overflow-y:auto}
+    body.cf-locked{position:fixed;left:0;right:0;width:100%;overflow:hidden}
+    #cf-hero{display:block;position:static;transform:none;max-width:none;animation:fadein .7s ease both;
+      padding:calc(32px + var(--safe-t)) calc(20px + var(--safe-r)) 140px calc(20px + var(--safe-l))}
+    #cf-hero .logo{gap:12px}
+    #cf-hero .mark{width:48px;height:48px}
+    #cf-hero h1{font-size:clamp(30px,9vw,44px)}
+    #cf-hero p{font-size:16px;margin-top:14px}
+    #cf-cta{display:inline-flex}
+    #cf-bubble{width:56px;height:56px;font-size:23px;
+      right:calc(16px + var(--safe-r));bottom:calc(16px + var(--safe-b))}
+    body.cf-locked #cf-bubble{opacity:0;transform:scale(.6);pointer-events:none}
+    #cf-panel{left:0;right:0;top:var(--cf-vv-top,0px);bottom:auto;width:100%;max-width:none;
+      height:var(--cf-vv-height,100dvh);max-height:none;border:0;border-radius:0;backdrop-filter:none;background:#fffaf0;
+      opacity:1;transform:translateY(100%);transition:transform .32s cubic-bezier(.32,.72,0,1)}
+    #cf-panel.open{transform:none}
+    header{padding:calc(10px + var(--safe-t)) calc(14px + var(--safe-r)) 10px calc(14px + var(--safe-l))}
+    #cf-close{display:grid}
+    #cf-log{padding:14px calc(16px + var(--safe-r)) 14px calc(16px + var(--safe-l))}
+    .msg{max-width:92%;font-size:15px}
+    .slots{max-width:92%}
+    .slot{padding:12px;font-size:14px}
+    footer{padding:10px calc(10px + var(--safe-r)) 10px calc(10px + var(--safe-l))}
+    input{font-size:16px;padding:12px}          /* 16px keeps iOS from zooming the page on focus */
+    button.send{min-width:72px;min-height:44px}
+    .powered{padding-bottom:calc(8px + var(--safe-b))}
+  }
+  @media (max-width:900px) and (max-height:500px){#cf-hero{display:none}}
+
+  /* ---------- touch devices: drop hover-only affordances ---------- */
+  @media (hover:none){
+    #cf-bubble:hover,button.send:hover{transform:none}
+    .slot:hover{background:#f6f0e0;transform:none}
+    .slot:active{background:#e9f3d4}
+  }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -97,20 +154,22 @@
 
 <section id="cf-hero">
   <div class="logo"><div class="mark"><svg viewBox="0 0 250 250"><use href="#cf-logo"/></svg></div><h1>CloseFuture</h1></div>
-  <p>An AI product studio that ships web and mobile apps in 4&ndash;6 weeks. Ask our assistant about our work, pricing and process &ndash; or book a call with Baskaran.</p>
+  <p>An AI product studio that ships web and mobile apps in 4&ndash;6 weeks. Ask our assistant about our work, pricing and process &ndash; or book a call with Team.</p>
   <div class="tags"><span>Web &amp; Mobile Apps</span><span>AI Products</span><span>4&ndash;6 Week MVPs</span></div>
+  <button id="cf-cta">&#128172; Ask the assistant</button>
 </section>
 
-<button id="cf-bubble" aria-label="Chat with CloseFuture">&#128172;</button>
+<button id="cf-bubble" aria-label="Chat with CloseFuture" aria-expanded="false" aria-controls="cf-panel">&#128172;</button>
 
-<div id="cf-panel" role="dialog" aria-label="CloseFuture assistant">
+<div id="cf-panel" role="dialog" aria-label="CloseFuture assistant" aria-modal="false">
   <header>
     <div class="mark"><svg viewBox="0 0 250 250"><use href="#cf-logo"/></svg></div>
-    <div><b>CloseFuture assistant</b><span>Online &middot; ask about our work, or book a call</span></div>
+    <div class="who"><b>CloseFuture assistant</b><span class="sub">Online &middot; ask about our work, or book a call</span></div>
+    <button id="cf-close" aria-label="Close chat">&times;</button>
   </header>
-  <div id="cf-log"></div>
+  <div id="cf-log" role="log" aria-live="polite"></div>
   <footer>
-    <input id="cf-input" placeholder="Ask something..." autocomplete="off">
+    <input id="cf-input" placeholder="Ask something..." autocomplete="off" enterkeyhint="send" autocapitalize="sentences">
     <button class="send" id="cf-send">Send</button>
   </footer>
   <div class="powered">CloseFuture &middot; AI assistant</div>
@@ -131,19 +190,81 @@ const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;   // FR-5.4
 const log = document.getElementById("cf-log");
 const input = document.getElementById("cf-input");
 const panel = document.getElementById("cf-panel");
+const bubble = document.getElementById("cf-bubble");
+
+/* ---------- responsive layout mode ----------
+   Phones (and short landscape) get a full-screen sheet; wider screens keep the docked panel. */
+const sheetMQ = matchMedia("(max-width:640px),(max-width:900px) and (max-height:500px)");
+const sheetMode = () => sheetMQ.matches;
+
+/* Size the sheet to the *visual* viewport so the on-screen keyboard shrinks the panel
+   instead of pushing the composer off-screen (iOS Safari does not shrink 100dvh). */
+const vv = window.visualViewport;
+function syncViewport(){
+  const root = document.documentElement.style;
+  if(vv && sheetMode()){
+    root.setProperty("--cf-vv-height", vv.height + "px");
+    root.setProperty("--cf-vv-top", (vv.offsetTop || 0) + "px");
+  }else{
+    root.removeProperty("--cf-vv-height"); root.removeProperty("--cf-vv-top");
+  }
+  if(panel.classList.contains("open")) log.scrollTop = log.scrollHeight;
+}
+if(vv){ vv.addEventListener("resize", syncViewport); vv.addEventListener("scroll", syncViewport); }
+
+let savedY = 0;                       // page scroll position, kept while the sheet covers the page
+function lockScroll(on){
+  if(on){
+    if(document.body.classList.contains("cf-locked")) return;
+    savedY = window.scrollY || 0;
+    document.body.style.top = -savedY + "px";
+    document.body.classList.add("cf-locked");
+  }else if(document.body.classList.contains("cf-locked")){
+    document.body.classList.remove("cf-locked");
+    document.body.style.top = "";
+    window.scrollTo(0, savedY);
+  }
+}
 
 function openPanel(){
   panel.classList.add("open");
+  bubble.setAttribute("aria-expanded","true");
+  panel.setAttribute("aria-modal", sheetMode() ? "true" : "false");
+  if(sheetMode()) lockScroll(true);
+  syncViewport();
   if(!log.dataset.greeted){
     log.dataset.greeted = "1";
-    add("bot","Hi! I'm the CloseFuture assistant. I can tell you about our work and pricing, or book a 30-minute call with Baskaran. What would you like?");
+    add("bot","Hi! I'm the CloseFuture assistant. I can tell you about our work and pricing, or book a 30-minute call with Team. What would you like?");
   }
-  input.focus();
+  if(!sheetMode()) input.focus();     // on a phone, let the greeting show before the keyboard covers it
 }
-document.getElementById("cf-bubble").onclick = () => {
-  panel.classList.contains("open") ? panel.classList.remove("open") : openPanel();
-};
-setTimeout(openPanel, 500);   // open on load so the page is never an empty screen
+function closePanel(){
+  panel.classList.remove("open");
+  bubble.setAttribute("aria-expanded","false");
+  panel.setAttribute("aria-modal","false");
+  lockScroll(false);
+  bubble.focus();
+}
+bubble.onclick = () => { panel.classList.contains("open") ? closePanel() : openPanel(); };
+document.getElementById("cf-close").onclick = closePanel;
+document.getElementById("cf-cta").onclick = openPanel;
+addEventListener("keydown", e => { if(e.key === "Escape" && panel.classList.contains("open")) closePanel(); });
+
+// Rotating a phone, or resizing a desktop window, can switch layout modes mid-conversation.
+function onModeChange(){
+  const open = panel.classList.contains("open");
+  if(sheetMode() && open) lockScroll(true); else lockScroll(false);
+  panel.setAttribute("aria-modal", sheetMode() && open ? "true" : "false");
+  syncViewport();
+}
+if(sheetMQ.addEventListener) sheetMQ.addEventListener("change", onModeChange);
+else if(sheetMQ.addListener) sheetMQ.addListener(onModeChange);   // older Safari
+addEventListener("orientationchange", () => setTimeout(onModeChange, 250));
+
+syncViewport();
+// Open on load on larger screens so the page is never an empty shell. On a phone the hero
+// plus the "Ask the assistant" button is the first screen, and the sheet opens on tap.
+if(!sheetMode()) setTimeout(openPanel, 500);
 
 function add(cls, text){
   const d = document.createElement("div");
@@ -176,6 +297,7 @@ async function send(text){
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({visitor_key: visitorKey(), message: text, visitor_tz: TZ})
     });
+    if(r.status === 429){ s.remove(); add("bot","You are sending messages very quickly - please wait a moment and try again."); return; }
     if(!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
     s.remove();
@@ -184,7 +306,7 @@ async function send(text){
   }catch(e){
     s.remove();
     add("bot","I couldn't reach our assistant just now. Please try again in a moment, or email baskaran@closefuture.io.");
-  }finally{ busy = false; input.focus(); }
+  }finally{ busy = false; if(!sheetMode()) input.focus(); }
 }
 
 document.getElementById("cf-send").onclick = () => send(input.value);
@@ -193,11 +315,21 @@ input.addEventListener("keydown", e => { if(e.key === "Enter") send(input.value)
 // ---------- drifting particle network ----------
 (function(){
   const c = document.getElementById("cf-particles"), x = c.getContext("2d");
-  let w, h, pts = [];
-  function size(){ w = c.width = innerWidth; h = c.height = innerHeight;
-    pts = Array.from({length: Math.min(70, Math.floor(w*h/22000))}, () =>
+  let w, h, pts = [], linked = true, raf = 0, t = 0;
+  function size(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);   // crisp on retina phones, capped for cost
+    w = innerWidth; h = innerHeight;
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+    c.style.width = w + "px"; c.style.height = h + "px";
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const small = w < 700;                                   // phones: fewer points, skip the O(n^2) link pass
+    linked = !small;
+    const n = small ? Math.min(28, Math.floor(w*h/26000)) : Math.min(70, Math.floor(w*h/22000));
+    pts = Array.from({length: n}, () =>
       ({x:Math.random()*w, y:Math.random()*h, vx:(Math.random()-.5)*.4, vy:(Math.random()-.5)*.4})); }
-  addEventListener("resize", size); size();
+  addEventListener("resize", () => { clearTimeout(t); t = setTimeout(size, 150); });
+  addEventListener("orientationchange", () => setTimeout(size, 250));
+  size();
   function tick(){
     x.clearRect(0,0,w,h);
     for(const p of pts){
@@ -205,14 +337,17 @@ input.addEventListener("keydown", e => { if(e.key === "Enter") send(input.value)
       if(p.x<0||p.x>w) p.vx*=-1; if(p.y<0||p.y>h) p.vy*=-1;
       x.fillStyle="#619E2F"; x.globalAlpha=.7; x.beginPath(); x.arc(p.x,p.y,1.6,0,7); x.fill();
     }
-    for(let i=0;i<pts.length;i++) for(let j=i+1;j<pts.length;j++){
+    if(linked) for(let i=0;i<pts.length;i++) for(let j=i+1;j<pts.length;j++){
       const d=Math.hypot(pts[i].x-pts[j].x, pts[i].y-pts[j].y);
       if(d<130){ x.globalAlpha=(1-d/130)*.35; x.strokeStyle="#619E2F";
         x.beginPath(); x.moveTo(pts[i].x,pts[i].y); x.lineTo(pts[j].x,pts[j].y); x.stroke(); }
     }
-    requestAnimationFrame(tick);
+    raf = requestAnimationFrame(tick);
   }
-  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) tick();
+  function play(){ if(!raf) raf = requestAnimationFrame(tick); }
+  function pause(){ cancelAnimationFrame(raf); raf = 0; }
+  document.addEventListener("visibilitychange", () => document.hidden ? pause() : play());  // saves battery on mobile
+  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) play();
 })();
 </script>
 </body>

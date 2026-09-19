@@ -10,6 +10,7 @@ from app.mcp_client import hub
 from app.observability.logger import log_event, timer
 from app.reliability.retry import ToolFailure
 from app.scoring import score_lead
+from app.security import sign_session
 from app.state.store import store
 
 AGENT = "lead_summary"
@@ -54,7 +55,7 @@ async def build_summary(req: AgentRequest, complete_flag: bool) -> dict:
                     "meet_link": booking.get("meet_link"),
                     "manual_followup": bool(booking.get("manual_followup"))},
         "complete": complete_flag,
-        "conversation_url": f"{settings.APP_BASE_URL}/session/{req.session_id}",
+        "conversation_url": f"{settings.APP_BASE_URL}/session/{req.session_id}?t={sign_session(req.session_id)}",
         "next_step": data.get("next_step") or "Follow up by email.",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -81,7 +82,7 @@ async def run(req: AgentRequest) -> AgentResponse:
                                         session_id=req.session_id, agent=AGENT)
             except ToolFailure as tf:
                 # FR-8.1: queue for retry, never lose the lead
-                await store.outbox_mark(row_id, "pending", error=tf.error.message)
+                await store.outbox_mark(row_id, req.session_id, "pending", error=tf.error.message)
                 await log_event("fallback", trace_id=req.trace_id, session_id=req.session_id,
                                 agent=AGENT, payload={"action": "queued_for_retry",
                                                       "error_code": tf.error.error_code},
@@ -89,7 +90,7 @@ async def run(req: AgentRequest) -> AgentResponse:
                 return AgentResponse(status="ok", agent=AGENT, error=tf.error,
                                      output={"queued": True, "summary": summary})
 
-            await store.outbox_mark(row_id, "sent", provider_id=result.get("provider_id"))
+            await store.outbox_mark(row_id, req.session_id, "sent", provider_id=result.get("provider_id"))
             sent_record = {"message_id": result.get("provider_id"),
                            "sent_at": datetime.now(timezone.utc).isoformat(),
                            "score": summary["lead_score"], "tier": summary["tier"],
