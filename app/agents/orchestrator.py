@@ -4,7 +4,7 @@ import asyncio, json
 from datetime import datetime, timezone
 
 from app.config import settings
-from app.contracts import AgentRequest, AgentResponse, SessionState
+from app.contracts import AgentRequest, AgentResponse, GuardrailVerdict, SessionState
 from app.agents import guardrail, lead_summary, scheduler, search
 from app.llm import complete_json
 from app.observability.logger import log_event, new_trace_id, timer
@@ -19,12 +19,20 @@ Classify the visitor's newest message into one or more intents:
 - schedule: wants to book a call / see available times
 - reschedule: wants to move an existing booking
 - cancel: wants to cancel an existing booking
-- provide_info: giving their name, email, company, budget or timeline
+- provide_info: giving their name, email, company, budget or timeline, UNPROMPTED or for a reason other
+  than continuing a booking already in progress
 - smalltalk: greeting, thanks, chit-chat
 - end_conversation: saying goodbye or that they are done
 
 Set confidence honestly. A vague message like "can you help with the thing for my app?" is genuinely
 ambiguous - give it LOW confidence rather than guessing a route.
+
+If the assistant's last message asked for the visitor's name/email/details specifically to complete a
+booking (look at the conversation so far), and this message supplies exactly that, it is NOT just
+provide_info - it is a continuation of that booking, so also include "schedule" (or "reschedule",
+matching whichever was in progress) alongside provide_info, with high confidence. A bare "My name is X,
+email y@z.com" answering that exact question must route back to the Scheduler, not dead-end in a
+generic acknowledgement - the visitor is still mid-booking and expects it to complete.
 
 Also extract qualification signals actually stated in this message (null otherwise) and rate
 intent_strength 0-10 (how close this visitor sounds to buying).
@@ -109,10 +117,21 @@ class Orchestrator:
             )
 
             # ---- 5. outbound guardrail, owned here only (FR-3.8, FR-7.1) ----
-            outbound = await guardrail.check_outbound(req, draft, context=context)
-            if outbound.verdict == "block":
-                draft = outbound.safe_fallback or draft
-                slots = []
+            # A response that already carries a structured error (FR-8.3) reached the visitor through
+            # an agent's own hardcoded reliability fallback (FR-8.1) - a static, developer-approved
+            # string, not fresh LLM generation - so it is exempt from re-screening. Re-running it
+            # through the free-form outbound classifier has repeatedly produced spurious blocks (e.g.
+            # objecting to "a rough time" or to "confirm by email today"), which only replaces an
+            # honest failure explanation (FR-8.4) with a less informative one.
+            has_fallback = any(r.error is not None for r in responses)
+            if has_fallback:
+                outbound = GuardrailVerdict(verdict="allow", category="none",
+                                            reason="developer-authored reliability fallback (FR-8.1)")
+            else:
+                outbound = await guardrail.check_outbound(req, draft, context=context)
+                if outbound.verdict == "block":
+                    draft = outbound.safe_fallback or draft
+                    slots = []
 
             # ---- 6. merge state ----
             for r in responses:

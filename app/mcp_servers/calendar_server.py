@@ -41,11 +41,17 @@ def service():
     return _service
 
 
-def _fail_if_simulating():
+def _fail_if_simulating() -> dict | None:
+    """Structured error (FR-8.3), same shape as _http_err - not a raised exception, or the retry
+    classifier in app/reliability/retry.py has no status code to read and defaults to retryable=True
+    for both cases, defeating the retryable-vs-not simulation entirely (FR-8.2)."""
     if os.getenv("SIMULATE_CALENDAR_OUTAGE") == "1":
-        raise RuntimeError("HTTP 503: calendar backend unavailable (simulated)")
+        return {"status": "error", "error_code": "CALENDAR_503", "retryable": True,
+                "message": "HTTP 503: calendar backend unavailable (simulated)", "agent": "calendar_mcp"}
     if os.getenv("SIMULATE_CALENDAR_AUTH_FAILURE") == "1":
-        raise RuntimeError("HTTP 401: invalid credentials (simulated)")
+        return {"status": "error", "error_code": "CALENDAR_401", "retryable": False,
+                "message": "HTTP 401: invalid credentials (simulated)", "agent": "calendar_mcp"}
+    return None
 
 
 def _http_err(exc: HttpError) -> dict:
@@ -71,7 +77,8 @@ def _busy(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
 @mcp.tool()
 def check_availability(start_iso: str, end_iso: str) -> dict:
     """Return busy blocks on the CloseFuture calendar between two ISO-8601 timestamps."""
-    _fail_if_simulating()
+    if sim := _fail_if_simulating():
+        return sim
     start = datetime.fromisoformat(start_iso)
     end = datetime.fromisoformat(end_iso)
     try:
@@ -87,7 +94,8 @@ def propose_slots(visitor_tz: str, days_ahead: int = 5, count: int = 3) -> dict:
 
     visitor_tz: IANA zone, e.g. 'Asia/Dubai'. Never ask the visitor to pick blindly (FR-5.3).
     """
-    _fail_if_simulating()
+    if sim := _fail_if_simulating():
+        return sim
     owner_tz = ZoneInfo(settings.CALENDAR_OWNER_TZ)
     try:
         vtz = ZoneInfo(visitor_tz)
@@ -139,7 +147,8 @@ def create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name:
 
 def _create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name: str,
                   notes: str = "", idempotency_key: str = "") -> dict:
-    _fail_if_simulating()
+    if sim := _fail_if_simulating():
+        return sim
     start = datetime.fromisoformat(start_iso)
     end = datetime.fromisoformat(end_iso)
 
@@ -200,7 +209,8 @@ def _create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name
 @mcp.tool()
 def modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
     """Move an existing booking to a new time (FR-5.8). Never creates a second event."""
-    _fail_if_simulating()
+    if sim := _fail_if_simulating():
+        return sim
     try:
         ev = service().events().patch(
             calendarId=settings.GOOGLE_CALENDAR_ID, eventId=event_id, sendUpdates="all",
@@ -217,7 +227,8 @@ def modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
 @mcp.tool()
 def cancel_event(event_id: str) -> dict:
     """Cancel an existing booking and notify the visitor (FR-5.8)."""
-    _fail_if_simulating()
+    if sim := _fail_if_simulating():
+        return sim
     try:
         service().events().delete(
             calendarId=settings.GOOGLE_CALENDAR_ID, eventId=event_id, sendUpdates="all"
