@@ -1,0 +1,97 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+#
+# Dashboard -> New -> Blueprint -> connect this repo. Render reads this file, creates the
+# service, and prompts for every value marked `sync: false` (those are secrets and are
+# never committed).
+#
+# One container runs three processes - the API plus both MCP servers - see start.sh.
+# Only the API is reachable from outside; the MCP servers stay on localhost.
+services:
+  - type: web
+    name: closefuture-agent
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Closest region to the Supabase project (aws-0-ap-south-1).
+    region: singapore
+    branch: main
+    healthCheckPath: /health
+    autoDeploy: true
+
+    envVars:
+      # ---------- non-secret defaults, committed on purpose ----------
+      - key: OPENAI_CHAT_MODEL
+        value: gpt-4o-mini
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+
+      # Both MCP servers listen inside this container (start.sh), so these stay on localhost.
+      - key: MCP_CALENDAR_URL
+        value: http://localhost:8931/mcp
+      - key: MCP_EMAIL_URL
+        value: http://localhost:8932/mcp
+
+      - key: CALENDAR_OWNER_TZ
+        value: Asia/Kolkata
+      - key: BUSINESS_HOURS
+        value: 10:00-18:00
+      - key: SLOT_MINUTES
+        value: 30
+      - key: SESSION_IDLE_TIMEOUT_MIN
+        value: 15
+      - key: SESSION_EXPIRY_DAYS
+        value: 30
+      - key: LOG_LEVEL
+        value: INFO
+
+      # ---------- secrets and per-deployment values (Render prompts for each) ----------
+
+      # Set this to the service's own URL once Render assigns it - for example
+      # https://closefuture-agent.onrender.com - then redeploy. It drives CORS and the
+      # signed session links in the lead email, so it must include the scheme.
+      - key: APP_BASE_URL
+        sync: false
+
+      - key: OPENAI_API_KEY
+        sync: false
+
+      - key: SUPABASE_URL
+        sync: false
+      # Must be the session-mode pooler on port 5432, not 6543: the booking flow holds a
+      # pg_advisory_lock across statements and needs a pinned connection.
+      - key: SUPABASE_DB_URL
+        sync: false
+      # Only `python -m app.rag.ingest` uses this. Leave it blank here - the knowledge base
+      # is ingested from your machine, never from the web service.
+      - key: SUPABASE_ADMIN_DB_URL
+        sync: false
+
+      - key: GOOGLE_CALENDAR_ID
+        sync: false
+      # Required even when signing in as the calendar owner: app/config.py has no default.
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      # The OAuth trio is what actually books on a personal Gmail calendar - a service
+      # account cannot invite attendees or attach Meet. See CALENDAR_BLOCKER.md.
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REFRESH_TOKEN
+        sync: false
+
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: SALES_INBOX
+        sync: false
+
+      # Generate each with: python -c "import secrets; print(secrets.token_urlsafe(32))"
+      - key: APP_SECRET
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      # Extra website origins allowed to call the API, comma separated.
+      - key: ALLOWED_ORIGINS
+        sync: false

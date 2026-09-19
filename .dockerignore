@@ -1,0 +1,22 @@
+# Keeps secrets, the local virtualenv and large binaries out of the build context.
+#
+# .env matters most: app/config.py deliberately ranks the dotenv file ABOVE real
+# environment variables, so a .env copied into the image would silently override
+# every value set in the Render dashboard.
+.env
+.env.local
+service-account.json
+token.json
+
+.git
+.gitignore
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local-only artefacts
+*.pdf
+project-overview.html
+reqs.txt
+docker-compose.yml
