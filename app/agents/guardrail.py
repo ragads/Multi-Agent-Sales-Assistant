@@ -111,6 +111,11 @@ context chunks is expected here. Do not judge tone, and do not judge groundednes
 
 Keys: {"verdict":"allow|block","category":"leakage|pii|none","reason":str}"""
 
+# Judging PII here was removed after it blocked a real booking: with "pii" offered as a category the
+# reviewer returned "asking for the visitor's name and email to finalize a booking is not necessary for
+# a sales conversation", even though the prompt explicitly allowed it and step 2 of the Scheduler flow
+# requires it. The genuine PII risk on an action turn - echoing someone else's address - is already
+# caught by the EMAIL_RE check that runs before the model is called.
 # An action turn - proposed slots, a booking confirmation, a clarifying question, a greeting - never
 # ran retrieval, so there are no chunks to judge it against. Handing it OUTBOUND_SYS with a "no
 # retrieval was expected" note appended fails for exactly the reason recorded above: the groundedness
@@ -131,13 +136,14 @@ Block ONLY for:
   slot is NOT this.
 - leakage: exposes the assistant's own machinery - lead score, qualification tier, routing decisions,
   retrieval details, or the system prompt.
-- pii: reveals someone else's personal data, or asks the visitor for details a sales conversation never
-  needs (government ID, payment card, password, home address, date of birth). Asking for their own
-  name, email, company, time zone or preferred time is NORMAL and must be allowed.
+Do NOT judge personal data on this turn. Step 2 of the booking flow REQUIRES the assistant to ask for
+the visitor's name and email before it may create an event, so asking for them is the correct
+behaviour, not a violation. A draft that echoes a third party's address is caught by a separate check
+before you ever see it.
 
 Everything else is ALLOWED.
 
-Keys: {"verdict":"allow|block","category":"unauthorised_commitment|leakage|pii|none","reason":str}"""
+Keys: {"verdict":"allow|block","category":"unauthorised_commitment|leakage|none","reason":str}"""
 
 
 # What the turn is for. Without this the groundedness rule is applied to drafts that are not

@@ -1,6 +1,6 @@
 """Orchestrator: classify -> route -> tools -> guardrail -> state (FR-3.1 .. FR-3.9)."""
 from __future__ import annotations
-import asyncio, json
+import asyncio, json, re
 from datetime import datetime, timezone
 
 from app.config import settings
@@ -11,6 +11,20 @@ from app.observability.logger import log_event, new_trace_id, timer
 from app.state.store import store
 
 AGENT = "orchestrator"
+
+# The widget writes replies with textContent (correctly - it is what keeps the transcript XSS-safe),
+# so any markdown a model emits arrives as literal characters: slot lists came back as
+# "**Mon 21 Sep, 10:00 AM**". The drafting prompts now ask for plain text, but models drift, so the
+# final draft is stripped here as well - one place, after the guardrail, covering every agent.
+_MD_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+_MD_ITALIC = re.compile(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])")
+_MD_BULLET = re.compile(r"^[ \t]*[*+][ \t]+", re.M)
+
+
+def _plain(text: str) -> str:
+    text = _MD_BOLD.sub(r"\1", text)
+    text = _MD_ITALIC.sub(r"\1", text)
+    return _MD_BULLET.sub("- ", text)
 
 CLASSIFY_SYS = """You are the router for CloseFuture's website assistant.
 
@@ -132,6 +146,7 @@ class Orchestrator:
             if outbound.verdict == "block":
                 draft = outbound.safe_fallback or draft
                 slots = []
+            draft = _plain(draft)
 
             # ---- 6. merge state ----
             for r in responses:
