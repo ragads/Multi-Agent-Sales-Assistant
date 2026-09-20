@@ -1,4 +1,4 @@
-# CloseFuture multi-agent sales assistant
+# CloseFuture multi-agent sales assistant.
 
 A five-agent AI chatbot for the CloseFuture website. It answers visitor questions grounded in the
 company profile, qualifies them as leads, books real discovery calls on Google Calendar, and emails a
