@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib, re
 
 from app.contracts import AgentRequest, AgentResponse, GuardrailVerdict
+from app.config import settings
 from app.llm import complete_json
 from app.observability.logger import log_event, timer
 
@@ -243,7 +244,8 @@ async def check_inbound(req: AgentRequest) -> GuardrailVerdict:
                                        safe_fallback=FALLBACKS[category])
         else:
             try:
-                data = await complete_json(INBOUND_SYS, f"Message:\n{text}", max_tokens=250)
+                data = await complete_json(INBOUND_SYS, f"Message:\n{text}", max_tokens=250,
+                                           model=settings.GUARDRAIL_MODEL)
                 v = data.get("verdict", "allow")
                 cat = data.get("category", "none")
                 verdict = GuardrailVerdict(
@@ -303,6 +305,7 @@ async def check_outbound(req: AgentRequest, draft: str, context: str = "",
                     f"Context chunks available to the assistant:\n{context or '(none - no retrieval ran)'}"
                     f"\n\nDraft reply:\n{draft}",
                     max_tokens=300,
+                    model=settings.GUARDRAIL_MODEL,
                 )
                 v = data.get("verdict", "allow")
                 cat = data.get("category", "none")

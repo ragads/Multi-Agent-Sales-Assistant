@@ -24,6 +24,9 @@ services:
         value: gpt-4o-mini
       - key: EMBEDDING_MODEL
         value: text-embedding-3-small
+      # The guardrail reviews every reply; the cheap model over-blocks. See app/config.py.
+      - key: GUARDRAIL_MODEL
+        value: gpt-4o
 
       # Both MCP servers listen inside this container (start.sh), so these stay on localhost.
       - key: MCP_CALENDAR_URL
