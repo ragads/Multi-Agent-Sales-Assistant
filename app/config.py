@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     # LLM + Embeddings - both on OpenAI, one key covers both (cheap: gpt-4o-mini + text-embedding-3-small)
     OPENAI_API_KEY: str
     OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
+    # The guardrail reviews every reply before it is sent, and gpt-4o-mini reads "block ONLY for X"
+    # as an invitation to find an X. It blocked a completed booking three times running, under a
+    # different category each time the previous one was withdrawn. Review is the one call where a
+    # false positive costs a conversation, so it gets the stronger model.
+    GUARDRAIL_MODEL: str = "gpt-4o"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMS: int = 1536
 

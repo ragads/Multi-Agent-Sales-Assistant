@@ -1,6 +1,6 @@
 """Orchestrator: classify -> route -> tools -> guardrail -> state (FR-3.1 .. FR-3.9)."""
 from __future__ import annotations
-import asyncio, json
+import asyncio, json, re
 from datetime import datetime, timezone
 
 from app.config import settings
@@ -11,6 +11,31 @@ from app.observability.logger import log_event, new_trace_id, timer
 from app.state.store import store
 
 AGENT = "orchestrator"
+
+# The widget writes replies with textContent (correctly - it is what keeps the transcript XSS-safe),
+# so any markdown a model emits arrives as literal characters: slot lists came back as
+# "**Mon 21 Sep, 10:00 AM**". The drafting prompts now ask for plain text, but models drift, so the
+# final draft is stripped here as well - one place, after the guardrail, covering every agent.
+_MD_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+_MD_ITALIC = re.compile(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])")
+_MD_BULLET = re.compile(r"^[ \t]*[*+][ \t]+", re.M)
+
+
+def _booking_confirmation(b: dict) -> str:
+    """Spell out what was actually booked, so a blocked confirmation still tells the truth."""
+    when = b.get("visitor_label") or b.get("start") or "the time you chose"
+    line = f"You're booked for {when}."
+    if b.get("attendee_email"):
+        line += f" The calendar invite is on its way to {b['attendee_email']}."
+    if b.get("meet_link"):
+        line += f" Google Meet link: {b['meet_link']}"
+    return line + " If anything looks wrong, email baskaran@closefuture.io."
+
+
+def _plain(text: str) -> str:
+    text = _MD_BOLD.sub(r"\1", text)
+    text = _MD_ITALIC.sub(r"\1", text)
+    return _MD_BULLET.sub("- ", text)
 
 CLASSIFY_SYS = """You are the router for CloseFuture's website assistant.
 
@@ -119,10 +144,25 @@ class Orchestrator:
             # ---- 5. outbound guardrail, owned here only (FR-3.8, FR-7.1) ----
             # Tell it what kind of turn this is. A decline and a booking confirmation both have no
             # retrieved context, and judging them by the groundedness rule blocks correct replies.
-            if any(r.error or (r.output and (r.output.get("manual_followup") or r.output.get("queued")))
-                   for r in responses):
+            booked = next((r.state_patch["booking"] for r in responses
+                            if r.state_patch and (r.state_patch.get("booking") or {}).get("event_id")),
+                           None)
+            if booked:
+                # An event id came back from the calendar. Whatever else happened on this turn, the
+                # meeting exists and saying otherwise is the one outcome that must never ship.
+                kind = "booked"
+            elif any(r.error or (r.output and (r.output.get("manual_followup") or r.output.get("queued")))
+                     for r in responses):
                 kind = "failure"
-            elif any(r.output and r.output.get("declined") for r in responses):
+            # `declined` is only set when retrieval returned nothing at all. When it returns
+            # weakly-related chunks - "refund policy" scoring against the pricing chunk, "office in
+            # Dubai" against the markets chunk - the Search agent answers instead, sets
+            # answered=False, and used to fall through to kind="answer". The groundedness rule was
+            # then applied to a correct "we have not published that", it blocked, and the visitor got
+            # FALLBACKS["unauthorised_commitment"] - pricing copy in reply to a refund question
+            # (FR-4.4). Both ways of finding nothing are the same kind of turn.
+            elif any(r.output and (r.output.get("declined") or r.output.get("answered") is False)
+                     for r in responses):
                 kind = "decline"
             elif context:
                 kind = "answer"
@@ -130,8 +170,13 @@ class Orchestrator:
                 kind = "action"
             outbound = await guardrail.check_outbound(req, draft, context=context, kind=kind)
             if outbound.verdict == "block":
-                draft = outbound.safe_fallback or draft
-                slots = []
+                # Slots came from the calendar, so they are still true and still pickable; clearing
+                # them left the visitor with "pick one" and nothing to pick.
+                draft = (_booking_confirmation(booked) if booked
+                         else (outbound.safe_fallback or draft))
+                if kind not in {"action", "booked"}:
+                    slots = []
+            draft = _plain(draft)
 
             # ---- 6. merge state ----
             for r in responses:

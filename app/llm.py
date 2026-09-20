@@ -15,11 +15,15 @@ from app.reliability.retry import with_retry
 _client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
 
-async def complete_json(system: str, prompt: str, *, max_tokens: int = 1024) -> dict:
-    """Ask for strict JSON via response_format, parsed defensively."""
+async def complete_json(system: str, prompt: str, *, max_tokens: int = 1024,
+                        model: str | None = None) -> dict:
+    """Ask for strict JSON via response_format, parsed defensively.
+
+    `model` overrides the default chat model - the guardrail uses it to review on a stronger one.
+    """
     async def _call():
         return await _client.chat.completions.create(
-            model=settings.OPENAI_CHAT_MODEL,
+            model=model or settings.OPENAI_CHAT_MODEL,
             max_completion_tokens=max_tokens,
             temperature=0,
             response_format={"type": "json_object"},

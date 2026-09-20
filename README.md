@@ -316,8 +316,21 @@ retries, scoring) are in **DECISIONS.md**.
 The app is one container running three processes (API + two MCP servers), see `start.sh`. It needs to stay
 awake because the idle sweeper (abandoned-lead emails) runs inside the API.
 
-**Render (free web service, no card):** New -> Web Service -> connect this repo -> Runtime *Docker* ->
-add every variable from `.env.example` in *Environment* (set `APP_BASE_URL` to the Render URL) -> deploy.
+**Render (free web service, no card).** `render.yaml` in the repo root is a Blueprint, so the service
+does not have to be configured by hand: Dashboard -> **New** -> **Blueprint** -> connect this repo.
+Render reads the file, creates the web service with the Docker runtime, and prompts for the 16 secrets
+(everything marked `sync: false`); the non-secret settings are already in the file.
+
+Two things are only knowable after the first deploy:
+
+1. Set `APP_BASE_URL` to the URL Render assigns, including the scheme
+   (`https://closefuture-agent.onrender.com`), then redeploy. It drives CORS and the signed session
+   links in the lead email, so a wrong value shows up as a widget that cannot call the API.
+2. Leave `SUPABASE_ADMIN_DB_URL` blank. The knowledge base is ingested from your machine with
+   `python -m app.rag.ingest`; the web service never needs owner rights.
+
+Run the files in `sql/` against the database once, in numerical order, before the first deploy.
+
 Free instances sleep after 15 idle minutes, so add a free UptimeRobot / cron-job.org monitor hitting
 `https://<your-app>.onrender.com/health` every 5 minutes to keep the sweeper alive.
 Most robust free option: an Oracle Cloud *Always Free* VM running `docker compose up -d`.
