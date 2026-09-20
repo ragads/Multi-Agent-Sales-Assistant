@@ -19,13 +19,29 @@ choice:
 is about. The chunker splits on markdown headings first and never breaks a line, which keeps bullets
 and table rows intact. Result on the current corpus: 14 documents, 49 chunks, longest 692 characters.
 
-## 2. Retrieval: top-k 6, minimum similarity 0.35 (FR-4.3, FR-4.4)
+## 2. Retrieval: top-k 6, minimum similarity 0.25 (FR-4.3, FR-4.4)
 
 k=6 comfortably covers a question that spans two documents (e.g. "what do you use for payments?" hits
-both the tech stack and two case studies) without stuffing the context with noise. The 0.35 cosine
-floor is what separates "weakly related" from "unrelated" on this corpus; below it the Search agent
-declines rather than guesses. If the top hits sit within 0.05 of each other but come from different
-source documents, all of them are kept - that is the multi-document case in FR-4.6.
+both the tech stack and two case studies) without stuffing the context with noise. If the top hits sit
+within 0.05 of each other but come from different source documents, all of them are kept - that is the
+multi-document case in FR-4.6.
+
+The floor was 0.35, on the reasoning that it separated "weakly related" from "unrelated". Measured
+against the corpus it did not. "How much does it cost" ranks the pricing chunk first at 0.268 and
+"pricing" at 0.278 - the right chunk every time, both discarded, so the assistant answered "I don't
+have that" on the most common question a sales visitor asks while the published rates sat in the
+corpus. Only literal phrasing ("hourly rate", 0.485) cleared the bar, which is not how visitors write.
+
+Nor can any floor make that call. A question that *should* be declined ("do you do blockchain
+smart-contract audits") scores 0.318 - higher than the pricing question that should be answered.
+Separating them requires reading the text, not comparing a cosine. That is the answer model's job and
+it does it reliably: given retrieved chunks that do not address the question it says so plainly, which
+is what FR-4.4 asks for and what it did on every decline tested.
+
+So the floor now does the one job a distance metric is good at - excluding noise, which scores around
+0.10 ("what is the weather in Paris", 0.097) - and the decision about relevance sits with the model
+that can read. Verified after the change: pricing questions answer with the real published figures,
+and the blockchain and weather questions still decline.
 
 ## 3. Confidence formula (FR-4.7)
 

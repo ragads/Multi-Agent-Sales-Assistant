@@ -79,7 +79,15 @@ class Settings(BaseSettings):
     CHUNK_CHARS: int = 700
     CHUNK_OVERLAP: int = 120
     TOP_K: int = 6
-    MIN_SIMILARITY: float = 0.35
+    # 0.35 threw away the right chunk for the most common sales question there is. "How much does it
+    # cost" ranks the pricing chunk first at 0.268 and "pricing" at 0.278 - correct every time, but
+    # both under the old floor, so the bot answered "I don't have that" while the rates sat in the
+    # corpus. Only robotic phrasing ("hourly rate", 0.485) cleared it. No floor separates answerable
+    # from unanswerable anyway: a question we should decline scores 0.318, higher than the pricing
+    # question we should answer. Deciding that needs to read the text, which is the answer model's
+    # job and it does it well - it declines on retrieved-but-irrelevant chunks. So the floor is set
+    # to admit real matches and only exclude noise (an off-topic question scores ~0.10).
+    MIN_SIMILARITY: float = 0.25
     CONFIDENCE_FLOOR: float = 0.45
     INTENT_CONFIDENCE_FLOOR: float = 0.60
 
