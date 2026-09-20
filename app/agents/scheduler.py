@@ -144,3 +144,42 @@ async def run(req: AgentRequest) -> AgentResponse:
                     latency_ms=t["ms"])
     return AgentResponse(agent=AGENT, output={"reply": reply, "slots": slots},
                          state_patch=state_patch, confidence=0.9)
+
+
+async def propose_only(req: AgentRequest) -> AgentResponse:
+    """Fetch times and say one fixed line - no model, no prose.
+
+    On a "what do you charge and can I book a call?" turn the Search agent and this one both write
+    into the same reply, and three rounds of prompt wording failed to stop the second model
+    restating the pricing the first had just given, or asking for a time zone it already had, or
+    asking for a name before it had called propose_slots at all. Two models cannot be reliably
+    talked into writing one coherent answer between them. So on that path this agent stops writing:
+    it calls the tool and returns a fixed sentence, and the slots become buttons as usual. The full
+    conversational agent still runs for every turn that is only about booking.
+    """
+    with timer() as t:
+        tz = req.state.visitor_tz or req.params.get("visitor_tz") or settings.CALENDAR_OWNER_TZ
+        try:
+            result = await hub.call("propose_slots", {"visitor_tz": tz}, trace_id=req.trace_id,
+                                    session_id=req.session_id, agent=AGENT)
+        except ToolFailure as tf:
+            await log_event("fallback", trace_id=req.trace_id, session_id=req.session_id, agent=AGENT,
+                            payload={"reason": tf.error.error_code, "action": "manual_followup_collection"},
+                            latency_ms=t["ms"])
+            return AgentResponse(
+                status="ok", agent=AGENT, error=tf.error,
+                output={"reply": ("I couldn't reach our calendar just now, so I don't want to promise a "
+                                  "slot I can't hold. Leave your name and email and Baskaran will "
+                                  "follow up to confirm a time."),
+                        "manual_followup": True},
+                state_patch={"booking": {"manual_followup": True, "reason": tf.error.error_code}})
+
+        slots = result.get("slots") or []
+        reply = ("Here are the next open times - pick one and I'll book it." if slots else
+                 "I don't have an open slot in the next few days. Tell me roughly when suits you and "
+                 "I'll find one.")
+
+    await log_event("agent_call", trace_id=req.trace_id, session_id=req.session_id, agent=AGENT,
+                    payload={"slots_proposed": len(slots), "booked": False, "mode": "propose_only"},
+                    latency_ms=t["ms"])
+    return AgentResponse(agent=AGENT, output={"reply": reply, "slots": slots}, confidence=0.9)
