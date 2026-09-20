@@ -19,6 +19,10 @@ AGENT = "orchestrator"
 _MD_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _MD_ITALIC = re.compile(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])")
 _MD_BULLET = re.compile(r"^[ \t]*[*+][ \t]+", re.M)
+# Booking confirmations came back as "[Join Meeting](https://meet.google.com/...)", which textContent
+# renders with the brackets showing and the URL buried in parentheses. The visitor needs the Meet URL
+# itself, so keep the address and drop the markup around it.
+_MD_LINK = re.compile(r"\[([^\]\n]*)\]\((\S+?)\)")
 
 
 def _booking_confirmation(b: dict) -> str:
@@ -33,6 +37,7 @@ def _booking_confirmation(b: dict) -> str:
 
 
 def _plain(text: str) -> str:
+    text = _MD_LINK.sub(r"\2", text)
     text = _MD_BOLD.sub(r"\1", text)
     text = _MD_ITALIC.sub(r"\1", text)
     return _MD_BULLET.sub("- ", text)
