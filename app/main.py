@@ -13,8 +13,9 @@ from app.config import settings
 from app.jobs import sweeper
 from app.mcp_client import hub
 from app.observability.logger import log_event, new_trace_id
-from app.security import (client_ip, limiter, require_admin, require_session_access,
-                          valid_session_id)
+from app.reliability.retry import ToolFailure
+from app.security import (BOOKING, TRACE, client_ip, limiter, require_admin,
+                          require_session_access, valid_session_id)
 from app.state.store import store
 
 
@@ -90,7 +91,7 @@ async def chat(body: ChatIn, request: Request):
 @app.get("/api/session/{session_id}")
 async def get_session(session_id: str, t: str | None = None,
                       x_admin_token: str | None = Header(default=None)):
-    require_session_access(session_id, t, x_admin_token)
+    require_session_access(session_id, t, x_admin_token, purpose=TRACE)
     state = await store.get(session_id)
     if state is None:
         raise HTTPException(404, "no such session")
@@ -110,7 +111,7 @@ async def end_session(session_id: str, complete: bool = True):
 @app.get("/api/trace/{session_id}")
 async def trace(session_id: str, t: str | None = None,
                 x_admin_token: str | None = Header(default=None)):
-    require_session_access(session_id, t, x_admin_token)
+    require_session_access(session_id, t, x_admin_token, purpose=TRACE)
     return {"session_id": session_id, "events": await store.trace(session_id)}
 
 
@@ -118,7 +119,7 @@ async def trace(session_id: str, t: str | None = None,
 async def session_page(session_id: str, t: str | None = None,
                        x_admin_token: str | None = Header(default=None)):
     """Human-readable transcript + trace. The signed link in the lead email opens it (FR-6.3)."""
-    require_session_access(session_id, t, x_admin_token)
+    require_session_access(session_id, t, x_admin_token, purpose=TRACE)
     state = await store.get(session_id)
     if state is None:
         raise HTTPException(404, "no such session")
@@ -189,7 +190,11 @@ class RescheduleIn(BaseModel):
 
 
 async def _booking_or_404(session_id: str, t: str | None):
-    require_session_access(session_id, t, None)
+    require_session_access(session_id, t, None, purpose=BOOKING)
+    # Every one of these endpoints reaches Google. The signed token bounds who can call them, but
+    # not how often, so a leaked or shared invite link could still hammer the calendar API.
+    if not limiter.allow(f"b:{session_id}", settings.RATE_BOOKING_PER_MIN, 60):
+        raise HTTPException(429, "Too many requests just now - please wait a moment.")
     state = await store.get(session_id)
     booking = (state.booking or {}) if state else {}
     if not booking.get("event_id"):
@@ -300,6 +305,14 @@ async def booking_reschedule(session_id: str, body: RescheduleIn, t: str | None 
             {"event_id": booking["event_id"], "new_start_iso": body.start_iso,
              "new_end_iso": body.end_iso},
             trace_id=trace_id, session_id=session_id, agent="self_serve")
+    except ToolFailure as tf:
+        await log_event("error", trace_id=trace_id, session_id=session_id, agent="self_serve",
+                        payload={"detail": f"self-serve reschedule failed: {tf.error.error_code}"})
+        # The slot went busy between the page listing it and the visitor clicking it. Say so, so
+        # they pick another, rather than reporting a generic outage for a recoverable collision.
+        if tf.error.error_code == "SLOT_TAKEN":
+            raise HTTPException(409, "That time was just taken - please pick another.")
+        raise HTTPException(503, "could not move the booking")
     except Exception as exc:
         await log_event("error", trace_id=trace_id, session_id=session_id, agent="self_serve",
                         payload={"detail": f"self-serve reschedule failed: {exc}"})

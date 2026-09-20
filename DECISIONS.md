@@ -14,10 +14,25 @@ choice:
 - Chunks much smaller than ~100 tokens lose the subject of the sentence. "It launched in July 2026"
   is useless without knowing that "it" is Webiz.
 
-700 characters is roughly 180 tokens, which holds one section-sized idea. The 120-character overlap
-(~30 tokens) carries the antecedent across a split so the second half of a section still knows what it
-is about. The chunker splits on markdown headings first and never breaks a line, which keeps bullets
-and table rows intact. Result on the current corpus: 14 documents, 49 chunks, longest 692 characters.
+700 characters is roughly 180 tokens, which holds one section-sized idea. The chunker splits on
+markdown headings first and never breaks a line, which keeps bullets and table rows intact.
+
+**What this actually produces, measured rather than assumed.** The corpus is 14 documents containing
+49 markdown sections, and the longest section is 692 characters. Every section therefore fits inside
+one chunk: 49 sections in, 49 chunks out, one to one, and no chunk straddles a heading.
+
+That is the intended outcome, and it has a consequence worth stating plainly rather than leaving for
+a reader to discover: **the 120-character overlap never applies to this corpus.** Overlap exists to
+carry the antecedent of a pronoun across a split, and nothing splits. Verified directly - zero of the
+35 consecutive chunk pairs share any text. Writing the source documents in sections that each fit a
+chunk is a better answer to FR-1.3 than relying on overlap to repair mid-section breaks, because a
+chunk that begins at a heading never loses its subject in the first place.
+
+The overlap setting is kept, not removed, because it is the guard for the case this corpus does not
+currently hit. Add a section longer than 700 characters - a case study that grows, a new FAQ - and
+`_pack()` splits it and the overlap starts doing its job. It is a bound on future content, and the
+number is justified on that basis: 120 characters is ~30 tokens, enough to carry a sentence's subject
+across a break without duplicating a meaningful share of a 180-token chunk.
 
 ## 2. Retrieval: top-k 6, minimum similarity 0.25 (FR-4.3, FR-4.4)
 
@@ -52,11 +67,21 @@ The model's own groundedness rating alone is optimistic. Weighting retrieval sli
 signal anchored to something measurable. Below 0.45 the Orchestrator appends an escalation offer rather
 than presenting a shaky answer as fact.
 
-## 4. Intent-confidence floor 0.60 (FR-3.6)
+## 4. Intent-confidence floor 0.72 (FR-3.6)
 
-Below 0.60 on the top intent, the Orchestrator asks one clarifying question instead of routing.
+Below 0.72 on the top intent, the Orchestrator asks one clarifying question instead of routing.
 Misrouting is more expensive than a single extra turn: sending a booking request to Search wastes the
 visitor's time, and sending a question to the Scheduler makes the bot look pushy.
+
+The floor started at 0.60, chosen on that reasoning alone. Measured, it never fired. The classifier is
+not calibrated the way the number assumes - it rates a genuinely ambiguous message far higher than a
+human would. "Can you help with the thing for my app?" is the FRD's own example of a message that
+should be clarified rather than routed, and the classifier scored it above 0.60, so FR-3.6 was
+answered with a guess in every test run. 0.72 sits above that score and below the 0.85-0.95 the
+classifier gives messages that really are unambiguous.
+
+This is a calibration knob, not a principle: it is tuned to the model named in `OPENAI_CHAT_MODEL`
+and would need re-measuring against a different one. Lower it if the assistant starts over-clarifying.
 
 ## 5. Multi-intent policy (FR-3.5)
 
@@ -83,6 +108,36 @@ Three mechanisms rather than one lock:
 
 Only the Orchestrator writes state, and only by applying a `state_patch`. Sub-agents read but never
 write, which removes whole classes of race by construction.
+
+## 6a. Moving a booking re-checks the slot, like making one (FR-5.5, FR-5.8)
+
+FR-5.5 is written about `create_event`: re-check availability immediately before writing, because the
+slot was proposed seconds ago and the gap between proposing and booking is exactly where a
+double-booking comes from. `modify_event` had the same gap and none of the protection - it patched
+the event straight to the new time.
+
+The window is real in both directions. A visitor opens the reschedule link in their invite, the page
+lists open times, they go and make a cup of tea, and meanwhile another visitor books one of those
+times through the chat. On the agent path it is worse: the model supplies `new_start_iso`, so nothing
+guaranteed the target was ever free. The result would be two calls stacked on the owner's calendar,
+which is the precise outcome FR-5.5 exists to prevent - the fact that it arrived through a move
+rather than a create makes no difference to the person whose calendar it is.
+
+`modify_event` now takes `_BOOK_LOCK` and checks the target window before patching, returning the
+same non-retryable `SLOT_TAKEN` a conflicting create returns. Sharing the one lock matters as much as
+the check: a create and a move racing each other would otherwise both pass their own check and both
+write.
+
+The check uses `events().list` rather than the `freebusy()` query `create_event` uses, because
+freebusy returns opaque busy blocks with no ids. An event shifted by fifteen minutes overlaps its own
+current slot, so a freebusy check would find the event colliding with itself and refuse every small
+adjustment. `events().list` returns ids, so the event being moved is excluded by id; events marked
+"free" (`transparency: transparent`) and all-day entries are skipped too, since neither blocks a slot.
+
+`SLOT_TAKEN` stays non-retryable here for the reason it is non-retryable on create: the fix is to
+propose new times, not to try the same one again. The Scheduler already handles it that way, and the
+self-service page surfaces it as a `409` with "that time was just taken - please pick another",
+rather than the generic `503` it used to report for a collision that is recoverable in one click.
 
 ## 7. Retry policy (FR-8.2)
 
@@ -234,3 +289,54 @@ is visible in the trace rather than silent.
 
 A deliberate end (`complete=True`) always reports, whatever was captured, because the visitor chose
 to finish rather than drifting off - and a booked session always reports.
+
+## One signed link per purpose, not one per session
+
+`sign_session()` originally signed the bare session id, and both links the system hands out were
+built from that one value: the reschedule link in the visitor's calendar invite, and the transcript
+link in the sales rep's lead email. They are the same string, so they open the same doors. Any
+visitor who booked a call could take the `t` from their own invite, change `/booking/` to
+`/session/`, and read the internal trace for their conversation - routing decisions and their
+justifications, guardrail verdicts and categories, retrieved chunk text with similarity scores, and
+their own lead score and qualification tier. That is the exact material `LEAK_PATTERNS` and the
+`leakage` guardrail category exist to keep out of replies, reachable by editing one path segment.
+
+The token is now bound to what it opens: `sign_session(session_id, purpose)` signs
+`"<purpose>:<session_id>"`, and `require_session_access` takes the purpose it is guarding. A booking
+token opens the booking page and nothing else. The admin token still opens everything, as before.
+
+Invites already delivered carry the old undifferentiated token, so `_legacy_sign()` is accepted -
+for `BOOKING` only, never for `TRACE`, which would reopen the leak. It is marked for deletion once
+those bookings are in the past.
+
+## Tool arguments are bound to session state, not to the prompt
+
+The Scheduler's system prompt tells the model to take `event_id` from the session state it is given.
+That is guidance, not authorization: `modify_event` and `cancel_event` move and delete real calendar
+entries, and Google mails the attendee either way. A turn that talked the model into passing a
+different id would have been honoured. `call_tool` now takes the id from `state.booking` and
+discards whatever the model passed.
+
+`create_event`'s `visitor_email` is handled the same way, with one honest limit. The address must
+parse and must appear in the visitor's own messages or in `qualification.email` - both sources are
+needed because the classifier's signals for the current turn are merged only after routing, so on
+the turn where someone first gives their address it exists in the history and nowhere else. This
+stops the model inventing or substituting an address. It does not stop a visitor from typing someone
+else's and calling it theirs; that is bounded by the rate limits, not by this check.
+
+## The lead email escapes everything it renders
+
+`_render()` in the email MCP server interpolated name, company, budget, timeline, key questions and
+next step straight into HTML. Every one of those comes out of the chat transcript, so a visitor who
+typed markup got live markup in the mail landing in the sales inbox - a plausible link or an overlay
+of the real transcript link, arriving from our own trusted sender. Every value is escaped now, and
+`meet_link` and `conversation_url` render as links only when they are `https`, otherwise as inert
+text. The session page in `app/main.py` already did this; the email had simply been missed.
+
+## Signed links are logged without their query string
+
+`hub.call` logs its full arguments, which is what makes the trace worth reading - but `manage_url`
+and `conversation_url` carry their access token in `?t=`, and those rows go to the `logs` table and
+to stdout, which on Render means the platform log viewer. `_redact` now strips the query string from
+any `*_url` or `*_link` value, leaving the path visible and the token gone. An audit row should not
+hold a working key to the thing it audits.

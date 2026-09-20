@@ -9,11 +9,15 @@ services:
   calendar-mcp:
     build: .
     command: python -m app.mcp_servers.calendar_server
-    ports: ["8931:8931"]
+    # Loopback only. These servers have no authentication of their own, so anyone who can
+    # reach them can cancel a real booking or send mail as us. The API talks to them over
+    # the compose network; the mapping exists so host-side scripts (verify_calendar.py)
+    # still work, and binds to 127.0.0.1 so nothing off this machine can.
+    ports: ["127.0.0.1:8931:8931"]
     env_file: [.env]
 
   email-mcp:
     build: .
     command: python -m app.mcp_servers.email_server
-    ports: ["8932:8932"]
+    ports: ["127.0.0.1:8932:8932"]
     env_file: [.env]

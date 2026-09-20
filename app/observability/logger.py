@@ -21,14 +21,33 @@ def new_trace_id() -> str:
     return str(uuid.uuid4())
 
 
+_PII_KEYS = {"email", "visitor_email", "phone", "attendee_email"}
+_URL_KEY_SUFFIXES = ("url", "link")
+
+
+def _strip_query(url: str) -> str:
+    """Drop the query string from a logged URL.
+
+    manage_url and conversation_url carry their access token in ?t=. An audit row is not a place
+    to keep a working key to the thing it audits, and these rows go to the logs table and to
+    stdout, which on a hosted runtime means the platform log viewer and anything shipping from it.
+    """
+    base, sep, _ = url.partition("?")
+    return base + ("?<redacted>" if sep else "")
+
+
 def _redact(payload: Any) -> Any:
-    """Strip obvious PII from logged tool arguments."""
+    """Strip obvious PII and link tokens from logged tool arguments."""
     if isinstance(payload, dict):
         out = {}
         for k, v in payload.items():
-            if k.lower() in {"email", "visitor_email", "phone", "attendee_email"} and isinstance(v, str):
+            key = k.lower()
+            if key in _PII_KEYS and isinstance(v, str):
                 head, _, dom = v.partition("@")
                 out[k] = (head[:2] + "***@" + dom) if dom else "***"
+            elif (key.endswith(_URL_KEY_SUFFIXES) and isinstance(v, str)
+                  and v.startswith(("http://", "https://"))):
+                out[k] = _strip_query(v)
             else:
                 out[k] = _redact(v)
         return out

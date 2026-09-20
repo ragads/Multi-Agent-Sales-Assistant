@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     RATE_VISITOR_PER_DAY: int = 120
     RATE_IP_PER_MIN: int = 30
     RATE_GLOBAL_PER_DAY: int = 1500  # hard stop on total chat turns - protects the OpenAI budget
+    # /booking/* is reached with a signed link, not a visitor key. The token bounds who may call
+    # it; this bounds how often, since each call reaches the Google Calendar API.
+    RATE_BOOKING_PER_MIN: int = 20
 
     # Retrieval tuning (see DECISIONS.md)
     CHUNK_CHARS: int = 700

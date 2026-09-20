@@ -124,6 +124,31 @@ def _busy(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
              datetime.fromisoformat(b["end"].replace("Z", "+00:00"))) for b in blocks]
 
 
+def _conflicting_events(start: datetime, end: datetime, ignore_event_id: str = "") -> list[str]:
+    """Ids of events overlapping [start, end), excluding the one being moved.
+
+    freebusy() cannot answer this question: it returns opaque busy blocks with no event ids, so an
+    event shifted to a time that overlaps its own current slot would collide with itself and be
+    refused. events().list with singleEvents expands recurrences and gives the ids needed to
+    exclude it. Every event the API returns for a window already overlaps that window.
+    """
+    resp = service().events().list(
+        calendarId=settings.GOOGLE_CALENDAR_ID,
+        timeMin=start.isoformat(), timeMax=end.isoformat(),
+        singleEvents=True, showDeleted=False, maxResults=50,
+    ).execute()
+    out = []
+    for ev in resp.get("items", []):
+        if ev.get("id") == ignore_event_id or ev.get("status") == "cancelled":
+            continue
+        if ev.get("transparency") == "transparent":   # marked "free" - does not block the slot
+            continue
+        if "dateTime" not in (ev.get("start") or {}):  # all-day entries are not busy blocks
+            continue
+        out.append(ev["id"])
+    return out
+
+
 @mcp.tool()
 def calendar_health() -> dict:
     """Report the credentials this RUNNING server holds, so a stale process can be spotted.
@@ -225,11 +250,12 @@ def create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name:
     """
     # check-then-insert must be atomic, or two simultaneous visitors can both pass the check (FR-5.5)
     with _BOOK_LOCK:
-        return _create_event(start_iso, end_iso, visitor_email, visitor_name, notes, idempotency_key)
+        return _create_event(start_iso, end_iso, visitor_email, visitor_name, notes,
+                             idempotency_key, manage_url)
 
 
 def _create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name: str,
-                  notes: str = "", idempotency_key: str = "") -> dict:
+                  notes: str = "", idempotency_key: str = "", manage_url: str = "") -> dict:
     if (simulated := _fail_if_simulating()):
         return simulated
     start = datetime.fromisoformat(start_iso)
@@ -305,10 +331,32 @@ def _create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name
 
 @mcp.tool()
 def modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
-    """Move an existing booking to a new time (FR-5.8). Never creates a second event."""
+    """Move an existing booking to a new time (FR-5.8). Never creates a second event.
+
+    Re-checks the target slot immediately before patching, for the reason create_event does
+    (FR-5.5): the slot was proposed seconds earlier and may have been taken since. Without it a
+    reschedule could move the call straight on top of another booking.
+    """
+    # Same atomicity requirement as create_event: check-then-write, and the two must not
+    # interleave with each other, or a booking and a reschedule can both claim one slot.
+    with _BOOK_LOCK:
+        return _modify_event(event_id, new_start_iso, new_end_iso)
+
+
+def _modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
     if (simulated := _fail_if_simulating()):
         return simulated
     try:
+        start = datetime.fromisoformat(new_start_iso)
+        end = datetime.fromisoformat(new_end_iso)
+    except ValueError as exc:
+        return {"status": "error", "error_code": "MALFORMED_REQUEST", "retryable": False,
+                "message": f"unparseable time: {exc}", "agent": "calendar_mcp"}
+    try:
+        # FR-5.5, applied to the move as well as the create.
+        if _conflicting_events(start, end, ignore_event_id=event_id):
+            return {"status": "error", "error_code": "SLOT_TAKEN", "retryable": False,
+                    "message": "That slot was just taken.", "agent": "calendar_mcp"}
         ev = service().events().patch(
             calendarId=settings.GOOGLE_CALENDAR_ID, eventId=event_id, sendUpdates="all",
             body={"start": {"dateTime": new_start_iso, "timeZone": settings.CALENDAR_OWNER_TZ},

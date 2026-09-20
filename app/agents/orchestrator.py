@@ -197,14 +197,11 @@ class Orchestrator:
                 kind = "action"
             outbound = await guardrail.check_outbound(req, draft, context=context, kind=kind)
             if outbound.verdict == "block":
-                # Slots came from the calendar, so they are still true and still pickable; clearing
-                # them left the visitor with "pick one" and nothing to pick.
                 draft = (_booking_confirmation(booked) if booked
                          else (outbound.safe_fallback or draft))
-                # Real times from the calendar stay pickable whatever the reviewer made of the
-                # prose around them. Clearing them left "pick one" with nothing to pick.
-                if not slots and kind not in {"action", "booked"}:
-                    slots = []
+                # `slots` is deliberately left alone. Those times came from the calendar, so they
+                # are still true and still pickable whatever the reviewer made of the prose around
+                # them; clearing them left the visitor with "pick one" and nothing to pick.
             draft = _plain(draft)
 
             # ---- 6. merge state ----

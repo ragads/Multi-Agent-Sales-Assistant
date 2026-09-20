@@ -1,6 +1,6 @@
 """Scheduler agent: all calendar work through MCP tool calls (FR-5.1 .. FR-5.8)."""
 from __future__ import annotations
-import json
+import json, re
 from datetime import datetime
 
 from app.config import settings
@@ -15,6 +15,27 @@ from app.state.store import store
 AGENT = "scheduler"
 
 CAL_TOOLS = ["propose_slots", "check_availability", "create_event", "modify_event", "cancel_event"]
+
+# Excludes the delimiters a mail header treats specially, so an address like "<a@b.com>" or
+# "a@b.com, victim@c.com" cannot be smuggled into the attendee field as one value.
+_EMAIL_RE = re.compile(r"[^@\s<>,;:\"']+@[^@\s<>,;:\"']+\.[^@\s<>,;:\"']+")
+
+
+def _visitor_emails(state) -> set[str]:
+    """Addresses this visitor typed themselves, plus the one already recorded on the session.
+
+    The classifier's signals for the CURRENT turn are merged into qualification only after routing,
+    so on the turn where someone first gives their address it exists in the history and nowhere
+    else - hence both sources. This stops the model inventing or substituting an address; it does
+    not stop a visitor from typing someone else's, which is bounded by the rate limits instead.
+    """
+    seen = {e.lower() for m in state.history if m["role"] == "visitor"
+            for e in _EMAIL_RE.findall(m["content"])}
+    known = ((state.qualification or {}).get("email") or "").strip().lower()
+    if known:
+        seen.add(known)
+    return seen
+
 
 SYS = """You are CloseFuture's scheduling assistant, booking 30-minute discovery calls with Baskaran.
 
@@ -88,6 +109,24 @@ async def run(req: AgentRequest) -> AgentResponse:
                 # The invite carries a signed link back to this booking, so the visitor can move or
                 # cancel it themselves instead of emailing and waiting.
                 args.setdefault("manage_url", manage_link(req.session_id))
+                # The invite goes to an address this visitor actually typed, not to one the model
+                # composed. Without this a prompt-injected turn can send a calendar invite from the
+                # owner's Google account to any address it cares to name.
+                supplied = (args.get("visitor_email") or "").strip()
+                if not _EMAIL_RE.fullmatch(supplied) or supplied.lower() not in _visitor_emails(req.state):
+                    return {"status": "error", "error_code": "NO_VISITOR_EMAIL",
+                            "message": "ask the visitor for their own email address before booking"}
+                args["visitor_email"] = supplied
+            if name in {"modify_event", "cancel_event"}:
+                # Authorisation, not prompt guidance. These move or delete a real calendar entry,
+                # so the id comes from this session's own booking and whatever the model passed is
+                # discarded - an injected event id now changes nothing. The SYS prompt asks for the
+                # same thing, but a sentence of English is not an access control.
+                event_id = (req.state.booking or {}).get("event_id")
+                if not event_id:
+                    return {"status": "error", "error_code": "NO_BOOKING",
+                            "message": "this session has no booking to change"}
+                args["event_id"] = event_id
             try:
                 result = await hub.call(name, args, trace_id=req.trace_id,
                                         session_id=req.session_id, agent=AGENT)

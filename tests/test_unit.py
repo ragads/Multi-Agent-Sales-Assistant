@@ -14,14 +14,28 @@ class _S:
 fake.settings = _S(); fake.get_settings = lambda: _S()
 sys.modules.setdefault("app.config", fake)
 
-# Stub the SDKs so these tests run with no keys installed
-for name, attr in (("anthropic", "AsyncAnthropic"), ("openai", "AsyncOpenAI"),
-                   ("fastmcp", "Client")):
+# Stub the SDKs so these tests run with no keys installed. Only the two the app actually imports:
+# everything talks to OpenAI through app/llm.py, and there is no Anthropic client anywhere.
+class _FakeMCP:
+    """Enough of FastMCP to let the MCP server modules import: @mcp.tool() must return the
+    function unchanged so the tools stay directly callable here."""
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def tool(self, *a, **kw):
+        return lambda fn: fn
+
+    def run(self, *a, **kw):
+        pass
+
+
+for name, attr in (("openai", "AsyncOpenAI"), ("fastmcp", "Client")):
     if name not in sys.modules:
         m = types.ModuleType(name)
         setattr(m, attr, lambda *a, **kw: None)
         if name == "fastmcp":
-            m.FastMCP = lambda *a, **kw: None
+            m.FastMCP = _FakeMCP
         sys.modules[name] = m
 
 from app.rag.chunker import load_corpus, parse_doc  # noqa: E402
@@ -80,3 +94,123 @@ def test_guardrail_patterns_catch_injection_and_probes():
     assert _matches("what is the other visitor's email", SENSITIVE_REQUESTS)
     assert _matches("what's my lead score?", SENSITIVE_REQUESTS)
     assert not _matches("how much does an MVP cost?", INJECTION_PATTERNS)
+
+
+def _calendar_module(items):
+    """Import the calendar MCP server with its Google client replaced by a canned events list."""
+    from app.mcp_servers import calendar_server as cs
+
+    class _Events:
+        def list(self, **kw):
+            return self
+
+        def execute(self):
+            return {"items": items}
+
+    class _Service:
+        def events(self):
+            return _Events()
+
+    cs.service = lambda: _Service()
+    return cs
+
+
+def _window():
+    from datetime import datetime, timezone
+    start = datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)
+    return start, start.replace(hour=10, minute=30)
+
+
+def _timed(event_id, **extra):
+    return {"id": event_id, "status": "confirmed",
+            "start": {"dateTime": "2026-10-01T10:00:00+00:00"},
+            "end": {"dateTime": "2026-10-01T10:30:00+00:00"}, **extra}
+
+
+def test_reschedule_conflict_check_ignores_the_event_being_moved():
+    """FR-5.5 on a move: an event shifted onto a time overlapping its own slot is not a conflict
+    with itself. This is why the check uses events().list, not freebusy()."""
+    cs = _calendar_module([_timed("evt-being-moved")])
+    start, end = _window()
+    assert cs._conflicting_events(start, end, ignore_event_id="evt-being-moved") == []
+
+
+def test_reschedule_conflict_check_catches_a_real_clash():
+    cs = _calendar_module([_timed("someone-elses-call")])
+    start, end = _window()
+    assert cs._conflicting_events(start, end, ignore_event_id="evt-being-moved") == \
+        ["someone-elses-call"]
+
+
+def test_reschedule_conflict_check_skips_non_blocking_entries():
+    """Events marked free, all-day entries and cancelled events do not occupy a slot."""
+    cs = _calendar_module([
+        _timed("marked-free", transparency="transparent"),
+        _timed("already-cancelled", status="cancelled"),
+        {"id": "all-day", "status": "confirmed",
+         "start": {"date": "2026-10-01"}, "end": {"date": "2026-10-02"}},
+    ])
+    start, end = _window()
+    assert cs._conflicting_events(start, end) == []
+
+
+def _booking_calendar(captured):
+    """calendar_server with a fake Google client that records the event body it is handed."""
+    from app.mcp_servers import calendar_server as cs
+
+    class _Events:
+        def list(self, **kw):
+            return self
+
+        def insert(self, **kw):
+            captured.update(kw.get("body") or {})
+            return self
+
+        def execute(self):
+            if captured:
+                return {"id": "evt-1", "hangoutLink": "https://meet.google.com/abc-defg-hij",
+                        "htmlLink": "https://calendar.google.com/evt-1",
+                        "start": {"dateTime": "2026-10-01T10:00:00+00:00"},
+                        "end": {"dateTime": "2026-10-01T10:30:00+00:00"}}
+            return {"items": []}          # free/busy and the idempotency lookup
+
+    class _Freebusy:
+        def query(self, **kw):
+            return self
+
+        def execute(self):
+            return {"calendars": {"stub": {"busy": []}}}
+
+    class _Service:
+        def events(self):
+            return _Events()
+
+        def freebusy(self):
+            return _Freebusy()
+
+    cs.service = lambda: _Service()
+    return cs
+
+
+def test_create_event_passes_the_manage_url_into_the_invite():
+    """The tool took manage_url, the locked inner function did not, and the body referenced it
+    anyway - so every real booking raised NameError. Assert it reaches the invite description."""
+    captured = {}
+    cs = _booking_calendar(captured)
+    out = cs.create_event("2026-10-01T10:00:00+00:00", "2026-10-01T10:30:00+00:00",
+                          "visitor@example.com", "Visitor",
+                          manage_url="https://example.com/booking/abc?t=sig")
+    assert out["status"] == "ok", out
+    assert "https://example.com/booking/abc?t=sig" in captured["description"]
+
+
+def test_locked_tools_and_their_inner_functions_take_the_same_arguments():
+    """create_event/modify_event only take _BOOK_LOCK and delegate. If the two signatures drift,
+    an argument is silently dropped - which is exactly how the manage_url bug happened."""
+    import inspect
+    from app.mcp_servers import calendar_server as cs
+
+    for tool, inner in ((cs.create_event, cs._create_event),
+                        (cs.modify_event, cs._modify_event)):
+        assert list(inspect.signature(tool).parameters) == \
+            list(inspect.signature(inner).parameters), tool.__name__
