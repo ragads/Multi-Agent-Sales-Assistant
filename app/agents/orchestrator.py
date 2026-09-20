@@ -25,6 +25,17 @@ _MD_BULLET = re.compile(r"^[ \t]*[*+][ \t]+", re.M)
 _MD_LINK = re.compile(r"\[([^\]\n]*)\]\((\S+?)\)")
 
 
+# A lead worth mailing needs something the recipient can act on. A name alone is not that - it gives
+# nobody to contact and nothing to discuss.
+REPORTABLE_SIGNALS = ("email", "company", "project_type", "budget_hint", "timeline")
+
+
+def _worth_reporting(state) -> bool:
+    """Is there anything in this session a salesperson could actually follow up?"""
+    qual = state.qualification or {}
+    return any(qual.get(k) for k in REPORTABLE_SIGNALS)
+
+
 def _booking_confirmation(b: dict) -> str:
     """Spell out what was actually booked, so a blocked confirmation still tells the truth."""
     when = b.get("visitor_label") or b.get("start") or "the time you chose"
@@ -342,6 +353,24 @@ class Orchestrator:
         booked = bool((state.booking or {}).get("event_id"))
         if sent and not ((complete and not sent.get("complete")) or (booked and not sent.get("booked"))):
             return
+        # FR-3.7 fires for every session that goes quiet for SESSION_IDLE_TIMEOUT_MIN, including the
+        # ones where someone opened the widget, typed a line and closed the tab. Those produced a
+        # summary headed "Website visitor" with no contact details and nothing to follow up, and at
+        # real traffic they would bury the leads that matter. A visitor who booked, or gave any
+        # detail worth acting on, still reports as before; a deliberate end (complete=True) always
+        # reports, because the visitor chose to finish.
+        if not complete and not booked and not _worth_reporting(state):
+            await log_event("lifecycle", trace_id=trace_id, session_id=session_id, agent=AGENT,
+                            payload={"event": "idle_timeout_not_reported",
+                                     "reason": "no contactable or substantive signal captured",
+                                     "turns": len(state.history)})
+            try:
+                await store.update_with_retry(session_id, {"status": "abandoned"}, state.version)
+            except Exception as exc:  # noqa: BLE001
+                await log_event("error", trace_id=trace_id, session_id=session_id, agent=AGENT,
+                                payload={"detail": f"abandon status update failed: {exc}"})
+            return
+
         req = AgentRequest(session_id=session_id, trace_id=trace_id, state=state,
                            params={"complete": complete})
         res = await lead_summary.run(req)

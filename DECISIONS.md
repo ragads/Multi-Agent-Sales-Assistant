@@ -218,3 +218,19 @@ Two hardening steps came out of the same pass. `anon` and `authenticated` were c
 `service_role`'s: a key that is no longer issued should not still map to full table access. Nothing
 reaches these tables over PostgREST; the FastAPI backend is the only client, and the browser widget
 only ever talks to that backend.
+
+## Abandoned sessions only report when there is a lead in them
+
+FR-3.7 sends a partial lead summary for every session idle past
+`SESSION_IDLE_TIMEOUT_MIN`. Taken literally that includes someone who opened the widget, typed one
+line and closed the tab: a mail headed "Website visitor", no contact details, nothing to follow up.
+Testing produced a steady stream of them, and at real traffic they would bury the leads that matter.
+
+`finalize()` now reports an abandoned session only when it holds something actionable - an email,
+company, project type, budget or timeline - or a booking. A name on its own does not qualify: it
+gives nobody to contact and nothing to discuss. Sessions that fall short are still marked
+`abandoned` and still logged, as `idle_timeout_not_reported` with the turn count, so the behaviour
+is visible in the trace rather than silent.
+
+A deliberate end (`complete=True`) always reports, whatever was captured, because the visitor chose
+to finish rather than drifting off - and a booked session always reports.
