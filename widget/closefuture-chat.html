@@ -142,6 +142,8 @@
     .slot:active{background:#e9f3d4}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.cf .slot.picked{outline:2px solid #4ade80;font-weight:600}
+.cf .slot:disabled{opacity:.45;cursor:default}
 </style>
 </head>
 <body>
@@ -281,7 +283,15 @@ function renderSlots(slots){
   slots.forEach((s,i) => {
     const b = document.createElement("button");
     b.className = "slot"; b.textContent = (i+1) + ".  " + (s.visitor_label || s.start_iso);
-    b.onclick = () => { send("I'll take option " + (i+1) + " - " + (s.visitor_label||s.start_iso)); };
+    b.onclick = () => {
+      wrap.querySelectorAll("button.slot").forEach(x => { x.disabled = true; });
+      b.classList.add("picked");
+      // Send the exact start_iso alongside the label. The Scheduler must call create_event with the
+      // slot's precise start_iso, and making it re-derive that from "Mon 21 Sep, 01:00 PM" is a
+      // needless chance to get the booking wrong.
+      send("I'll take option " + (i+1) + " - " + (s.visitor_label||s.start_iso)
+           + " [start_iso=" + s.start_iso + "]");
+    };
     wrap.appendChild(b);
   });
   log.appendChild(wrap); log.scrollTop = log.scrollHeight;

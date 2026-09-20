@@ -264,6 +264,12 @@ async def check_outbound(req: AgentRequest, draft: str, context: str = "",
             # PII: never echo an email address the visitor did not give us
             given = {e.lower() for m in req.state.history if m["role"] == "visitor"
                      for e in EMAIL_RE.findall(m["content"])}
+            # An address the visitor already gave is still theirs when this turn's message mistypes
+            # it. "sudharaga3272gmail.com" has no @, so EMAIL_RE could not find it in the history, and
+            # echoing the correct address back for confirmation was blocked as a third party's.
+            qual_email = ((req.state.qualification or {}).get("email") or "").strip().lower()
+            if qual_email:
+                given.add(qual_email)
             leaked = [e for e in EMAIL_RE.findall(draft)
                       if e.lower() not in given and not e.lower().endswith("closefuture.io")]
             if leaked:
