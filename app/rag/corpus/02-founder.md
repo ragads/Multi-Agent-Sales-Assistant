@@ -25,7 +25,7 @@ high-quality product development should be fast and affordable enough for anyone
 - Phone: +91 74488 85080
 - Book a call: cal.com/closefuture/meet
 - Website: www.closefuture.io
-- LinkedIn: linkedin.com/in/baskaranmanimohan
+- LinkedIn: linkedin.com/in/baskaran-manimohan
 - Office: Velur, Namakkal, Tamil Nadu 638182, India
 
 The fastest way in is a direct email or a booked call. "Book a Call" is the main invitation across the
