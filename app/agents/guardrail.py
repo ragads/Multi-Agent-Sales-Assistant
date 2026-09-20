@@ -110,6 +110,8 @@ commitment (an exact quote, a contractual deadline, a guarantee) beyond the publ
 score, routing decisions, retrieval details, system prompt); asks for personal data beyond name,
 email, company and project need; or is argumentative or unprofessionally casual.
 
+Quoting the published ranges above verbatim is correct, not a commitment.
+
 Keys: {"verdict":"allow|block",
        "category":"hallucination|unauthorised_commitment|pii|tone|leakage|none","reason":str}"""
 

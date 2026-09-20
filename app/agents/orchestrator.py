@@ -19,6 +19,10 @@ AGENT = "orchestrator"
 _MD_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _MD_ITALIC = re.compile(r"(?<![\w*])\*([^*\n]+?)\*(?![\w*])")
 _MD_BULLET = re.compile(r"^[ \t]*[*+][ \t]+", re.M)
+# Booking confirmations came back as "[Join Meeting](https://meet.google.com/...)", which textContent
+# renders with the brackets showing and the URL buried in parentheses. The visitor needs the Meet URL
+# itself, so keep the address and drop the markup around it.
+_MD_LINK = re.compile(r"\[([^\]\n]*)\]\((\S+?)\)")
 
 
 def _booking_confirmation(b: dict) -> str:
@@ -33,6 +37,7 @@ def _booking_confirmation(b: dict) -> str:
 
 
 def _plain(text: str) -> str:
+    text = _MD_LINK.sub(r"\2", text)
     text = _MD_BOLD.sub(r"\1", text)
     text = _MD_ITALIC.sub(r"\1", text)
     return _MD_BULLET.sub("- ", text)
@@ -44,12 +49,20 @@ Classify the visitor's newest message into one or more intents:
 - schedule: wants to book a call / see available times
 - reschedule: wants to move an existing booking
 - cancel: wants to cancel an existing booking
-- provide_info: giving their name, email, company, budget or timeline
+- provide_info: giving their name, email, company, budget or timeline, UNPROMPTED or for a reason other
+  than continuing a booking already in progress
 - smalltalk: greeting, thanks, chit-chat
 - end_conversation: saying goodbye or that they are done
 
 Set confidence honestly. A vague message like "can you help with the thing for my app?" is genuinely
 ambiguous - give it LOW confidence rather than guessing a route.
+
+If the assistant's last message asked for the visitor's name/email/details specifically to complete a
+booking (look at the conversation so far), and this message supplies exactly that, it is NOT just
+provide_info - it is a continuation of that booking, so also include "schedule" (or "reschedule",
+matching whichever was in progress) alongside provide_info, with high confidence. A bare "My name is X,
+email y@z.com" answering that exact question must route back to the Scheduler, not dead-end in a
+generic acknowledgement - the visitor is still mid-booking and expects it to complete.
 
 Also extract qualification signals actually stated in this message (null otherwise) and rate
 intent_strength 0-10 (how close this visitor sounds to buying).
