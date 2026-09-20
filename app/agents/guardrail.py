@@ -57,6 +57,12 @@ FALLBACKS = {
 # had failed (FR-8.4), and a blocked decline became marketing copy instead of an honest "not
 # published" (FR-4.4). A required turn keeps a required substitute - still safe, still honest.
 REQUIRED_FALLBACKS = {
+    # create_event returned an event id: the meeting exists, the invite has gone out, and the visitor
+    # has to be told. Blocking this one and substituting "let me arrange that properly" left a booked
+    # meeting on the calendar while the visitor believed nothing had happened.
+    "booked": ("Your meeting is booked - the calendar invite is on its way to your email, with the "
+               "Google Meet link in it. If anything about it looks wrong, email "
+               "baskaran@closefuture.io and Baskaran will sort it out."),
     "failure": ("Something on our side didn't work just then, and I don't want to tell you it "
                 "succeeded when it didn't. If you leave your name and email, Baskaran will follow "
                 "up directly."),
@@ -100,9 +106,14 @@ Keys: {"verdict":"allow|block",
 # primed with the commitment and groundedness rules and keeps applying them, so a correct decline or
 # a correct outage message gets swapped for marketing copy that hides what happened. These turns get
 # their own narrow prompt instead, which can only return the two verdicts that still make sense.
-OUTBOUND_REQUIRED_SYS = """You review a draft reply that a company website assistant MUST send: either
-an honest notice that a tool failed, or a deliberate decline because nothing relevant is published.
-Both are required behaviours. The visitor has to receive them.
+OUTBOUND_REQUIRED_SYS = """You review a draft reply that a company website assistant MUST send: an
+honest notice that a tool failed, a deliberate decline because nothing relevant is published, or a
+confirmation that a meeting has just been booked. All three are required behaviours. The visitor has
+to receive them.
+
+A booking confirmation states what the calendar returned - a date, a time, a Google Meet link, the
+address the invite went to. Those are facts, not claims to be checked, and the visitor's own address
+appearing in a confirmation of their own booking is correct, not a PII leak.
 
 Your ONLY job is to catch two things:
 - leakage: exposes the assistant's own machinery - the visitor's lead score or qualification tier,
@@ -281,7 +292,7 @@ async def check_outbound(req: AgentRequest, draft: str, context: str = "",
                                        safe_fallback=_fallback_for(kind, category))
         else:
             try:
-                if kind in {"failure", "decline"}:
+                if kind in {"failure", "decline", "booked"}:
                     sys_prompt = OUTBOUND_REQUIRED_SYS
                 elif kind == "action":
                     sys_prompt = OUTBOUND_ACTION_SYS
