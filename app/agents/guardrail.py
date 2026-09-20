@@ -91,7 +91,18 @@ and never grounds to block - the visitor is volunteering their details, not extr
 
 Keys: {"verdict":"allow|block","category":"prompt_injection|sensitive_request|none","reason":str}"""
 
+# The reviewer kept returning unauthorised_commitment for the two things this assistant exists to
+# do: "suggesting scheduling a call with Baskaran, which is not supported by the context" and
+# "includes specific available slots for a call". Offering the call is the whole point, and slot
+# times come from the calendar, not from a chunk. Both are now named as allowed - declining to
+# commit was being read as committing too.
 OUTBOUND_SYS = """You review a draft reply from a company website assistant before it is sent.
+
+ALWAYS ALLOWED, whatever the context chunks contain: offering, suggesting or arranging a call with
+Baskaran; proposing or confirming specific meeting times, which come from the calendar tools and
+not from the chunks; asking the visitor for their name, email, company, project description,
+time zone or preferred time; and REFUSING to commit ("we cannot guarantee a date"), which is the
+opposite of an unauthorised commitment, never an instance of one.
 
 Block if it: states a fact not supported by the supplied context chunks; makes an unauthorised
 commitment (an exact quote, a contractual deadline, a guarantee) beyond the published ranges

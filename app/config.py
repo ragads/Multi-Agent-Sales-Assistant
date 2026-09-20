@@ -89,7 +89,10 @@ class Settings(BaseSettings):
     # to admit real matches and only exclude noise (an off-topic question scores ~0.10).
     MIN_SIMILARITY: float = 0.25
     CONFIDENCE_FLOOR: float = 0.45
-    INTENT_CONFIDENCE_FLOOR: float = 0.60
+    # Raised from 0.60: the classifier scored "Can you help with the thing for my app?" above the
+    # old floor and answered it instead of asking what they meant, so FR-3.6 never fired in
+    # testing. This is a tuning knob - lower it again if the assistant starts over-clarifying.
+    INTENT_CONFIDENCE_FLOOR: float = 0.72
 
     @property
     def cors_origins(self) -> list[str]:

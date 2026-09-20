@@ -293,7 +293,11 @@ class Orchestrator:
             decision["reason"] = "single question about the company"
             r = await search.run(req)
             # FR-4.7 escalation: a low-confidence answer offers the founder instead of guessing
-            if r.confidence is not None and r.confidence < settings.CONFIDENCE_FLOOR and r.output:
+            # A decline already offers the call, and appending the nudge to one pitched it twice in
+            # consecutive paragraphs. Only nudge when the answer tried to answer and fell short.
+            already_offers = (r.output or {}).get("declined") or                 (r.output or {}).get("answered") is False or                 "call with baskaran" in ((r.output or {}).get("reply") or "").lower()
+            if (r.confidence is not None and r.confidence < settings.CONFIDENCE_FLOOR
+                    and r.output and not already_offers):
                 r.output["reply"] = r.output.get("reply", "") + (
                     "\n\nIf you need something more precise than that, a quick call with Baskaran is "
                     "the fastest way - shall I look at times?")
