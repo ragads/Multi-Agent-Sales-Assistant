@@ -21,6 +21,11 @@ def sign_session(session_id: str) -> str:
     return hmac.new(_key(), session_id.encode(), hashlib.sha256).hexdigest()[:32]
 
 
+def manage_link(session_id: str) -> str:
+    """Signed self-service link for the calendar invite (reschedule / cancel)."""
+    return (f"{settings.APP_BASE_URL.rstrip('/')}/booking/{session_id}"
+            f"?t={sign_session(session_id)}")
+
 def valid_session_id(value: str) -> bool:
     try:
         uuid.UUID(value)

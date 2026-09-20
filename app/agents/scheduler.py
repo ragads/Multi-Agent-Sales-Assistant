@@ -9,6 +9,7 @@ from app.llm import run_with_tools, to_openai_tools
 from app.mcp_client import hub
 from app.observability.logger import log_event, timer
 from app.reliability.retry import ToolFailure
+from app.security import manage_link
 from app.state.store import store
 
 AGENT = "scheduler"
@@ -84,6 +85,9 @@ async def run(req: AgentRequest) -> AgentResponse:
                 args.setdefault("visitor_tz", tz)
             if name == "create_event":
                 args.setdefault("idempotency_key", f"{req.session_id}:{args.get('start_iso', '')}")
+                # The invite carries a signed link back to this booking, so the visitor can move or
+                # cancel it themselves instead of emailing and waiting.
+                args.setdefault("manage_url", manage_link(req.session_id))
             try:
                 result = await hub.call(name, args, trace_id=req.trace_id,
                                         session_id=req.session_id, agent=AGENT)

@@ -218,6 +218,7 @@ Everything at once instead: `docker compose up --build` (still needs a filled `.
 | Raw trace JSON | `Invoke-RestMethod http://localhost:8000/api/trace/{id} -Headers @{"X-Admin-Token"="<ADMIN_TOKEN>"}` |
 | Force the happy-path lead email | `Invoke-RestMethod -Method Post "http://localhost:8000/api/session/{id}/end?complete=true" -Headers @{"X-Admin-Token"="<ADMIN_TOKEN>"}` |
 | Abandoned-session lead email | stop replying; the sweeper fires after `SESSION_IDLE_TIMEOUT_MIN` |
+| Reschedule or cancel from the invite | open the link in the calendar invite's description - `/booking/{id}?t=<signed token>` |
 | Calendar + Meet end to end | `python scripts/verify_calendar.py` (add an email address to see a real invite arrive) |
 | Double-booking race | `python scripts/demo_race_condition.py` — leaves a real event tomorrow at 15:00; delete it afterwards |
 | Calendar outage | restart the calendar server with `SIMULATE_CALENDAR_OUTAGE=1`, then `python scripts/simulate_calendar_outage.py` → 3 attempts, `failed_fell_back` |

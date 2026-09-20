@@ -206,9 +206,19 @@ def propose_slots(visitor_tz: str, days_ahead: int = 5, count: int = 3) -> dict:
 _BOOK_LOCK = threading.Lock()
 
 
+def _description(notes: str, manage_url: str) -> str:
+    """Invite body. The manage link is what lets the visitor move or cancel without writing an email."""
+    body = notes or "Discovery call booked via the CloseFuture website assistant."
+    if manage_url:
+        body += ("\n\nNeed a different time, or can no longer make it?\n"
+                 f"Reschedule or cancel here: {manage_url}\n"
+                 "The link is personal to this booking - please don't forward it.")
+    return body
+
+
 @mcp.tool()
 def create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name: str,
-                 notes: str = "", idempotency_key: str = "") -> dict:
+                 notes: str = "", idempotency_key: str = "", manage_url: str = "") -> dict:
     """Book the discovery call: re-checks availability first, adds a Meet link, invites the visitor.
 
     Returns error_code SLOT_TAKEN (non-retryable) if the slot went busy in the interim (FR-5.5).
@@ -253,7 +263,7 @@ def _create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name
 
     body = {
         "summary": f"CloseFuture discovery call - {visitor_name}",
-        "description": (notes or "Discovery call booked via the CloseFuture website assistant."),
+        "description": _description(notes, manage_url),
         "start": {"dateTime": start.isoformat(), "timeZone": settings.CALENDAR_OWNER_TZ},
         "end": {"dateTime": end.isoformat(), "timeZone": settings.CALENDAR_OWNER_TZ},
         "attendees": [{"email": visitor_email, "displayName": visitor_name}],

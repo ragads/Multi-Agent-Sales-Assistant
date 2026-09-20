@@ -174,3 +174,158 @@ summary {html.escape(json.dumps(state.summary_sent or {}))}</p>
 @app.get("/widget", response_class=FileResponse)
 async def widget():
     return FileResponse("widget/closefuture-chat.html")
+
+
+# --------------------------------------------------------------------- self-service booking (FR-5.8)
+# The calendar invite carries a signed link here, so a visitor can move or cancel their own call
+# without emailing and waiting for a reply. The token is the same HMAC that guards /session.
+#
+# Every mutation is a POST. Mail clients and link scanners routinely fetch the URLs in a message to
+# build previews, and a cancel that acted on GET would delete real bookings on its own.
+
+class RescheduleIn(BaseModel):
+    start_iso: str = Field(max_length=40)
+    end_iso: str = Field(max_length=40)
+
+
+async def _booking_or_404(session_id: str, t: str | None):
+    require_session_access(session_id, t, None)
+    state = await store.get(session_id)
+    booking = (state.booking or {}) if state else {}
+    if not booking.get("event_id"):
+        raise HTTPException(404, "no booking on this session")
+    return state, booking
+
+
+@app.get("/booking/{session_id}", response_class=HTMLResponse)
+async def booking_page(session_id: str, t: str | None = None):
+    _state, booking = await _booking_or_404(session_id, t)
+    when = booking.get("visitor_label") or booking.get("start") or "your booked time"
+    meet = booking.get("meet_link") or ""
+    meet_html = f'<a class=meet href="{html.escape(meet)}">{html.escape(meet)}</a>' if meet else ""
+    return f"""<!doctype html><meta charset=utf-8><title>Your CloseFuture call</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>
+*{{box-sizing:border-box}}
+body{{font-family:system-ui,Arial;margin:0;padding:clamp(16px,5vw,48px);background:#0f1f00;color:#e9f3d4}}
+.card{{max-width:560px;margin:0 auto;background:#16290a;border:1px solid #2f4d16;border-radius:14px;
+  padding:clamp(18px,4vw,28px)}}
+h1{{margin:0 0 4px;font-size:21px;color:#c6e78a}} .when{{font-size:17px;margin:14px 0 6px}}
+a.meet{{color:#9fd356;overflow-wrap:anywhere}}
+.row{{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}}
+button{{font:inherit;padding:11px 16px;border-radius:9px;border:1px solid #2f4d16;cursor:pointer;
+  background:#1f3a0d;color:#e9f3d4}}
+button.primary{{background:#4ade80;color:#0f1f00;border-color:#4ade80;font-weight:600}}
+button:disabled{{opacity:.5;cursor:default}}
+.slot{{display:block;width:100%;text-align:left;margin:8px 0}}
+#msg{{margin-top:18px;padding:12px;border-radius:9px;background:#1f3a0d;display:none}}
+.muted{{color:#9bb07a;font-size:13px;margin-top:18px}}
+</style>
+<div class=card>
+  <h1>Your CloseFuture call</h1>
+  <div class=when id=when>{html.escape(str(when))}</div>
+  {meet_html}
+  <div class=row>
+    <button class=primary id=resch>Pick a new time</button>
+    <button id=cancel>Cancel this call</button>
+  </div>
+  <div id=slots></div>
+  <div id=msg></div>
+  <p class=muted>This link is personal to your booking - please don't forward it.</p>
+</div>
+<script>
+const SID = {json.dumps(session_id)}, T = {json.dumps(t or "")};
+const msg = document.getElementById("msg"), slots = document.getElementById("slots");
+function say(text, done){{
+  msg.style.display = "block"; msg.textContent = text;
+  if(done){{ document.getElementById("resch").disabled = true;
+             document.getElementById("cancel").disabled = true; slots.innerHTML = ""; }}
+}}
+document.getElementById("resch").onclick = async () => {{
+  say("Finding open times...");
+  const r = await fetch("/api/booking/" + SID + "/slots?t=" + encodeURIComponent(T));
+  if(!r.ok) return say("Couldn't load times just now. Please email baskaran@closefuture.io.");
+  const data = await r.json();
+  msg.style.display = "none"; slots.innerHTML = "";
+  if(!data.slots.length) return say("No open slots in the next few days - email baskaran@closefuture.io.");
+  data.slots.forEach(s => {{
+    const b = document.createElement("button");
+    b.className = "slot"; b.textContent = s.visitor_label || s.start_iso;
+    b.onclick = async () => {{
+      say("Moving your call...");
+      const res = await fetch("/api/booking/" + SID + "/reschedule?t=" + encodeURIComponent(T), {{
+        method: "POST", headers: {{"Content-Type": "application/json"}},
+        body: JSON.stringify({{start_iso: s.start_iso, end_iso: s.end_iso}})
+      }});
+      const out = await res.json().catch(() => ({{}}));
+      if(res.ok && out.status === "ok"){{
+        document.getElementById("when").textContent = s.visitor_label || s.start_iso;
+        say("Done - your call has been moved. A new invite is on its way.", true);
+      }} else say(out.detail || "That didn't work. Please email baskaran@closefuture.io.");
+    }};
+    slots.appendChild(b);
+  }});
+}};
+document.getElementById("cancel").onclick = async () => {{
+  if(!confirm("Cancel this call?")) return;
+  say("Cancelling...");
+  const res = await fetch("/api/booking/" + SID + "/cancel?t=" + encodeURIComponent(T), {{method: "POST"}});
+  const out = await res.json().catch(() => ({{}}));
+  if(res.ok && out.status === "ok")
+    say("Your call is cancelled. You're welcome to book again any time.", true);
+  else say(out.detail || "That didn't work. Please email baskaran@closefuture.io.");
+}};
+</script>"""
+
+
+@app.get("/api/booking/{session_id}/slots")
+async def booking_slots(session_id: str, t: str | None = None):
+    state, _booking = await _booking_or_404(session_id, t)
+    tz = state.visitor_tz or settings.CALENDAR_OWNER_TZ
+    try:
+        result = await hub.call("propose_slots", {"visitor_tz": tz}, trace_id=new_trace_id(),
+                                session_id=session_id, agent="self_serve")
+    except Exception:
+        raise HTTPException(503, "calendar unavailable")
+    return {"slots": result.get("slots") or []}
+
+
+@app.post("/api/booking/{session_id}/reschedule")
+async def booking_reschedule(session_id: str, body: RescheduleIn, t: str | None = None):
+    state, booking = await _booking_or_404(session_id, t)
+    trace_id = new_trace_id()
+    try:
+        result = await hub.call(
+            "modify_event",
+            {"event_id": booking["event_id"], "new_start_iso": body.start_iso,
+             "new_end_iso": body.end_iso},
+            trace_id=trace_id, session_id=session_id, agent="self_serve")
+    except Exception as exc:
+        await log_event("error", trace_id=trace_id, session_id=session_id, agent="self_serve",
+                        payload={"detail": f"self-serve reschedule failed: {exc}"})
+        raise HTTPException(503, "could not move the booking")
+    # visitor_label described the old time, so it is dropped rather than left contradicting the start
+    patch = {"booking": {**booking, "start": result.get("start", body.start_iso),
+                         "meet_link": result.get("meet_link") or booking.get("meet_link"),
+                         "visitor_label": None}}
+    await store.update_with_retry(session_id, patch, state.version)
+    await log_event("lifecycle", trace_id=trace_id, session_id=session_id, agent="self_serve",
+                    payload={"event": "rescheduled_by_visitor", "start": body.start_iso})
+    return {"status": "ok", "start": result.get("start", body.start_iso)}
+
+
+@app.post("/api/booking/{session_id}/cancel")
+async def booking_cancel(session_id: str, t: str | None = None):
+    state, booking = await _booking_or_404(session_id, t)
+    trace_id = new_trace_id()
+    try:
+        await hub.call("cancel_event", {"event_id": booking["event_id"]}, trace_id=trace_id,
+                       session_id=session_id, agent="self_serve")
+    except Exception as exc:
+        await log_event("error", trace_id=trace_id, session_id=session_id, agent="self_serve",
+                        payload={"detail": f"self-serve cancel failed: {exc}"})
+        raise HTTPException(503, "could not cancel the booking")
+    await store.update_with_retry(session_id, {"booking": None, "status": "active"}, state.version)
+    await log_event("lifecycle", trace_id=trace_id, session_id=session_id, agent="self_serve",
+                    payload={"event": "cancelled_by_visitor", "event_id": booking["event_id"]})
+    return {"status": "ok"}
