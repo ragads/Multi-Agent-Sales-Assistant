@@ -141,10 +141,21 @@ class Orchestrator:
             draft = "\n\n".join(r.reply for r in responses if r.reply).strip() or \
                 "Could you tell me a little more about what you're looking for?"
             # the outbound guardrail must see the retrieved chunk text, not just source names
-            context = "\n\n".join(
+            context_parts = (
                 [r.output["context"] for r in responses if r.output and r.output.get("context")]
                 + [c for r in responses for c in r.citations]
             )
+            # The reviewer only ever saw retrieved chunks, so on a turn mixing a question with a
+            # booking it judged real calendar times against the pricing corpus and blocked them:
+            # "offering specific open times for a call, which should come from the calendar tools
+            # and not be assumed". They did come from the calendar tools - it had no way to tell,
+            # because tool output was never part of the evidence it was handed. Now it is.
+            if slots:
+                times = "; ".join(sl.get("visitor_label") or sl.get("start_iso", "") for sl in slots)
+                context_parts.append(
+                    "[calendar tool output - propose_slots returned these open times, so they are "
+                    "facts, not claims to verify]: " + times)
+            context = "\n\n".join(context_parts)
 
             # ---- 5. outbound guardrail, owned here only (FR-3.8, FR-7.1) ----
             # Tell it what kind of turn this is. A decline and a booking confirmation both have no
@@ -179,7 +190,9 @@ class Orchestrator:
                 # them left the visitor with "pick one" and nothing to pick.
                 draft = (_booking_confirmation(booked) if booked
                          else (outbound.safe_fallback or draft))
-                if kind not in {"action", "booked"}:
+                # Real times from the calendar stay pickable whatever the reviewer made of the
+                # prose around them. Clearing them left "pick one" with nothing to pick.
+                if not slots and kind not in {"action", "booked"}:
                     slots = []
             draft = _plain(draft)
 
