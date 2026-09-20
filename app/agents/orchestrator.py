@@ -114,7 +114,15 @@ class Orchestrator:
             if any(r.error or (r.output and (r.output.get("manual_followup") or r.output.get("queued")))
                    for r in responses):
                 kind = "failure"
-            elif any(r.output and r.output.get("declined") for r in responses):
+            # `declined` is only set when retrieval returned nothing at all. When it returns
+            # weakly-related chunks - "refund policy" scoring against the pricing chunk, "office in
+            # Dubai" against the markets chunk - the Search agent answers instead, sets
+            # answered=False, and used to fall through to kind="answer". The groundedness rule was
+            # then applied to a correct "we have not published that", it blocked, and the visitor got
+            # FALLBACKS["unauthorised_commitment"] - pricing copy in reply to a refund question
+            # (FR-4.4). Both ways of finding nothing are the same kind of turn.
+            elif any(r.output and (r.output.get("declined") or r.output.get("answered") is False)
+                     for r in responses):
                 kind = "decline"
             elif context:
                 kind = "answer"
