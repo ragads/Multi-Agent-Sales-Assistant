@@ -253,7 +253,14 @@ class Orchestrator:
             decision["reason"] = ("question + booking: answered first, then offered times, because the "
                                   "answer often changes what the visitor wants to book")
             s1 = await search.run(req)
-            s2 = await scheduler.run(req)
+            # Both agents used to get the same mixed message, so the Scheduler answered the pricing
+            # question too and the visitor read the rates twice in consecutive paragraphs. Give it the
+            # booking half where the classifier isolated one.
+            booking_ask = next((i.get("payload", {}).get("question")
+                                for i in intents if i["intent"] in {"schedule", "reschedule", "cancel"}),
+                               None)
+            s2 = await scheduler.run(req.model_copy(update={"message": booking_ask})
+                                     if booking_ask else req)
             decision["chosen_agents"] = ["search", "scheduler"]
             slots = s2.output.get("slots", []) if s2.output else []
             return decision, [s1, s2], slots
