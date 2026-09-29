@@ -1,0 +1,25 @@
+services:
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports: ["8000:8000"]
+    env_file: [.env]
+    environment:
+      MCP_CALENDAR_URL: http://calendar-mcp:8931/mcp
+      MCP_EMAIL_URL: http://email-mcp:8932/mcp
+    depends_on: [calendar-mcp, email-mcp]
+
+  # MCP servers are reachable only on the compose network (no published ports) and require a bearer token
+  calendar-mcp:
+    build: .
+    command: python -m app.mcp_servers.calendar_server
+    env_file: [.env]
+    environment:
+      MCP_BIND_HOST: 0.0.0.0
+
+  email-mcp:
+    build: .
+    command: python -m app.mcp_servers.email_server
+    env_file: [.env]
+    environment:
+      MCP_BIND_HOST: 0.0.0.0
