@@ -71,7 +71,10 @@ email, company and project need; or is argumentative or unprofessionally casual.
 
 NOT violations (public, expected content - allow them): naming CloseFuture or its founder Baskaran,
 his email baskaran@closefuture.io, offering a call with him, saying something isn't in CloseFuture's
-published material and declining to guess, and quoting the published ranges above.
+published material and declining to guess, and quoting the published ranges above. Meeting times,
+booking confirmations and Meet links that appear in the verified facts came from the live calendar
+tool - they are supported, not hallucinated - and asking the visitor for their name and email to
+book is expected.
 
 Keys: {"verdict":"allow|block",
        "category":"hallucination|unauthorised_commitment|pii|tone|leakage|none","reason":str}"""
@@ -145,7 +148,8 @@ async def check_outbound(req: AgentRequest, draft: str, context: str = "") -> Gu
             try:
                 data = await complete_json(
                     OUTBOUND_SYS,
-                    f"Context chunks available to the assistant:\n{context or '(none - no retrieval ran)'}"
+                    f"Verified facts available to the assistant (retrieved passages and live calendar "
+                    f"tool output):\n{context or '(none)'}"
                     f"\n\nDraft reply:\n{draft}",
                     max_tokens=300, name="guardrail.outbound",
                 )

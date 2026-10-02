@@ -104,7 +104,10 @@ async def run(req: AgentRequest) -> AgentResponse:
             return AgentResponse(
                 agent=AGENT, confidence=confidence, citations=citations,
                 output={"reply": reply, "query": query, "answered": answered,
-                        "low_confidence": confidence < settings.CONFIDENCE_FLOOR},
+                        "low_confidence": confidence < settings.CONFIDENCE_FLOOR,
+                        # the passages the answer is built from, so the outbound guardrail checks the
+                        # reply against their text rather than just their document names
+                        "verified_facts": [hits[i].content for i in (used or range(min(3, len(hits))))]},
             )
 
         except ToolFailure as tf:

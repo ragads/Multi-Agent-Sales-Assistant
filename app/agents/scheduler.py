@@ -219,5 +219,18 @@ async def run(req: AgentRequest) -> AgentResponse:
     await log_event("agent_call", trace_id=req.trace_id, session_id=req.session_id, agent=AGENT,
                     payload={"slots_proposed": len(slots), "booked": "booking" in state_patch},
                     latency_ms=t["ms"])
-    return AgentResponse(agent=AGENT, output={"reply": reply, "slots": slots},
+    # What the calendar actually returned, for the outbound guardrail: times and booking details in the
+    # reply come from these tool results, not from the knowledge base, and must not read as invented.
+    facts = []
+    shown = slots or req.state.proposed_slots or []
+    if shown:
+        facts.append("Free slots returned by the calendar tool: " + "; ".join(
+            f"{s.get('visitor_label')} (= {s.get('owner_label')})" for s in shown))
+    if state_patch.get("booking"):
+        facts.append("Booking result from the calendar tool: " + json.dumps(state_patch["booking"]))
+    elif "booking" in state_patch:
+        facts.append("The calendar tool cancelled the visitor's booking.")
+    elif booking:
+        facts.append("Existing booking on record: " + json.dumps(booking))
+    return AgentResponse(agent=AGENT, output={"reply": reply, "slots": slots, "verified_facts": facts},
                          state_patch=state_patch, confidence=0.9)

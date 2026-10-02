@@ -151,8 +151,11 @@ class Orchestrator:
             # ---- 4. compose the draft ----
             draft = "\n\n".join(r.reply for r in responses if r.reply).strip() or \
                 "Could you tell me a little more about what you're looking for?"
-            context = "\n".join(
-                f"{c}" for r in responses for c in r.citations
+            # everything the draft may legitimately state: retrieved passages, calendar tool output
+            # (slots, booking results) and source names - the outbound guardrail judges against this
+            context = "\n\n".join(
+                [f for r in responses for f in (r.output or {}).get("verified_facts", [])]
+                + [f"source: {c}" for r in responses for c in r.citations]
             )
 
             # ---- 5. outbound guardrail, owned here only (FR-3.8, FR-7.1) ----
