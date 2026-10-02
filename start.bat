@@ -9,6 +9,13 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
+rem self-hosted Langfuse tracing (only if it was set up with scripts\setup_langfuse.py and Docker is running)
+if exist "observability\langfuse.env" (
+    docker compose -f observability\docker-compose.langfuse.yml --env-file observability\langfuse.env up -d >nul 2>&1 ^
+        && echo Langfuse: http://localhost:3000 ^
+        || echo Langfuse not started - open Docker Desktop, then run start.bat again for tracing
+)
+
 start "CloseFuture - calendar MCP (8931)" cmd /k ".venv\Scripts\python -m app.mcp_servers.calendar_server"
 start "CloseFuture - email MCP (8932)" cmd /k ".venv\Scripts\python -m app.mcp_servers.email_server"
 

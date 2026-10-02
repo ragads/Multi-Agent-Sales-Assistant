@@ -1,0 +1,54 @@
+# Self-hosted Langfuse (v2, matching the langfuse==2.60.x SDK) for model-call tracing.
+#
+#   python scripts/setup_langfuse.py      # first time: generates secrets + keys, wires .env, starts it
+#   docker compose -f observability/docker-compose.langfuse.yml --env-file observability/langfuse.env up -d
+#
+# Dashboard: http://localhost:3000  (login from observability/langfuse.env)
+# Postgres is reachable only on the compose network; Langfuse binds to 127.0.0.1 only.
+name: closefuture-langfuse
+
+services:
+  langfuse-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD}
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  langfuse:
+    image: langfuse/langfuse:2
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: "false"
+      AUTH_DISABLE_SIGNUP: "true"
+      # headless setup: org, project, API keys and the dashboard user are created on first start
+      LANGFUSE_INIT_ORG_ID: closefuture
+      LANGFUSE_INIT_ORG_NAME: CloseFuture
+      LANGFUSE_INIT_PROJECT_ID: closefuture-assistant
+      LANGFUSE_INIT_PROJECT_NAME: CloseFuture assistant
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_ADMIN_EMAIL}
+      LANGFUSE_INIT_USER_NAME: CloseFuture admin
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_ADMIN_PASSWORD}
+
+volumes:
+  langfuse-db:

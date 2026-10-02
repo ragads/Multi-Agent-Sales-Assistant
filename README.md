@@ -129,7 +129,20 @@ Put the two values in `MCP_CALENDAR_TOKEN` and `MCP_EMAIL_TOKEN`. The API and th
 `.env`, so nothing else needs configuring. The servers listen on `127.0.0.1` only unless you set
 `MCP_BIND_HOST`. Background: DECISIONS.md, decision 15.
 
-### 2.6 Langfuse (optional - model-call tracing)
+### 2.6 Langfuse (model-call tracing)
+
+**Self-hosted, one command (what this deployment uses).** With Docker Desktop running:
+
+```bash
+python scripts/setup_langfuse.py
+```
+
+It generates the secrets and API keys (`observability/langfuse.env`, git-ignored), writes the keys into
+`.env`, starts Langfuse and its Postgres from `observability/docker-compose.langfuse.yml`, and prints
+the dashboard login. Open http://localhost:3000 and restart the API. `start.bat` starts Langfuse
+automatically from then on. Visitor conversations never leave your machine.
+
+**Or Langfuse Cloud:**
 
 1. Sign up at cloud.langfuse.com (or self-host) and create a project.
 2. **Settings -> API Keys -> Create new API keys.** Copy the public key (`pk-lf-...`) into

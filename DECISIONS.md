@@ -304,3 +304,13 @@ Why Langfuse over LangSmith: it is open source and self-hostable (visitor conver
 infrastructure), it has a free cloud tier, and its OpenAI integration needs no LangChain. Full prompts
 go to Langfuse rather than into our own `logs` table, because prompts contain visitor messages and the
 logs table is kept lean and PII-redacted.
+
+**Deployed self-hosted.** Langfuse 2 (matching the 2.60 SDK) runs in Docker with its own Postgres
+(`observability/docker-compose.langfuse.yml`), set up by `scripts/setup_langfuse.py` using Langfuse's
+headless initialisation: the project, API keys and dashboard user are created on first start, with no
+manual clicks. It binds to 127.0.0.1 and its database has no published port, so visitor conversations
+never leave the machine. Verified: one visitor turn appears as one trace with five generations
+(`guardrail.inbound`, `orchestrator.classify`, `search.rewrite`, `search.answer`,
+`guardrail.outbound`), each with prompt, response, token counts and latency, grouped by session.
+Cost reads as 0 while the free Gemini tier is in use; on OpenAI, Langfuse prices the generations
+itself.
