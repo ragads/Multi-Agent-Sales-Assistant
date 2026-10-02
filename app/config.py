@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     #   LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/  (key from Google AI Studio)
     LLM_BASE_URL: str = ""
     LLM_API_KEY: str = ""              # takes precedence over OPENAI_API_KEY when set
+    LLM_TIMEOUT_S: float = 30.0        # per model call; a slower call is retried by our own retry policy
     OPENAI_CHAT_MODEL: str = "gpt-4o-mini"   # chat model name at whichever provider is configured
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMS: int = 1536
@@ -95,7 +96,11 @@ class Settings(BaseSettings):
     @property
     def llm_client_kwargs(self) -> dict:
         """Arguments for every AsyncOpenAI client in the app (chat, retrieval, ingest)."""
-        kw = {"api_key": self.LLM_API_KEY or self.OPENAI_API_KEY}
+        # A bounded timeout and no SDK-level retries: app/reliability/retry.py already retries with
+        # backoff, and the SDK defaults (600 s timeout, 2 hidden retries) let one overloaded model call
+        # stall a visitor's turn for minutes.
+        kw = {"api_key": self.LLM_API_KEY or self.OPENAI_API_KEY,
+              "timeout": self.LLM_TIMEOUT_S, "max_retries": 0}
         if self.LLM_BASE_URL:
             kw["base_url"] = self.LLM_BASE_URL
         return kw

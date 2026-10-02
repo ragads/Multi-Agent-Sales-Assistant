@@ -6,7 +6,7 @@ which turns any exception into an AgentError, so a failing agent is always repor
 and never breaks the turn. See ARCHITECTURE.md for the full flow.
 """
 from __future__ import annotations
-import asyncio, json
+import asyncio, json, traceback
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
@@ -75,7 +75,10 @@ class Orchestrator:
             try:
                 # one turn at a time per session; other sessions are unaffected (FR-2.6)
                 async with store.session_lock(state.id):
-                    return await self._turn(state.id, message, trace_id)
+                    try:
+                        return await self._turn(state.id, message, trace_id)
+                    except Exception as exc:  # noqa: BLE001 - FR-8.4: an honest reply, never a silent gap
+                        return await self._turn_failed(state.id, trace_id, exc)
             except SessionBusyError:
                 await log_event("lifecycle", trace_id=trace_id, session_id=state.id, agent=AGENT,
                                 payload={"event": "session_busy",
@@ -83,6 +86,23 @@ class Orchestrator:
                 return {"session_id": state.id, "trace_id": trace_id, "slots": [], "busy": True,
                         "reply": "I'm still working on your previous message - give me a moment and "
                                  "send that again."}
+
+    async def _turn_failed(self, session_id: str, trace_id: str, exc: Exception) -> dict:
+        """A turn crashed after the visitor's message was saved: record why, and answer honestly.
+
+        The reply is also saved to the session, so a reload shows the visitor what happened instead of
+        their own message with nothing after it.
+        """
+        reply = ("Something on our side failed just then and I don't want to give you a wrong answer. "
+                 "Could you send that again? If it keeps happening, email baskaran@closefuture.io.")
+        await log_event("error", trace_id=trace_id, session_id=session_id, agent=AGENT,
+                        payload={"detail": f"turn failed: {type(exc).__name__}: {exc}",
+                                 "where": traceback.format_exc(limit=6)[-1500:]})
+        try:
+            await store.append_message(session_id, "assistant", reply, agent="orchestrator:error")
+        except Exception:  # noqa: BLE001 - the database may be what failed; the reply still goes out
+            pass
+        return {"session_id": session_id, "reply": reply, "trace_id": trace_id, "slots": [], "error": True}
 
     async def _call_agent(self, run: Callable[[AgentRequest], Awaitable[AgentResponse]],
                           req: AgentRequest, name: str) -> AgentResponse:
