@@ -61,7 +61,7 @@ What happens at each step, and why:
 | 7a | Search | Rewrites the question into a standalone query, embeds it, retrieves top-6 chunks above 0.35 similarity, answers only from them, and returns citations plus `confidence = 0.6*similarity + 0.4*groundedness`. With no hits it declines instead of guessing. |
 | 7b | Scheduler | The model decides the action; `call_tool` checks and fills the arguments (DECISIONS.md, decision 14), then calls the calendar MCP server over authenticated HTTP. The server re-checks the booking rules and availability. Slots offered are saved as a state patch, so the next turn can only book one of them. |
 | 8 | Failure check | See section 2. |
-| 10 | Outbound guardrail | Checks the draft against the retrieved chunks for invented facts, unauthorised commitments, leaked internals and third-party emails. Fails *closed*: if it can't verify the draft, a safe fallback is sent instead. |
+| 10 | Outbound guardrail | Checks the draft against the **verified facts** the agents return - the text of the passages Search used, and the calendar tool's own output (offered slots, booking results) from the Scheduler - for invented facts, unauthorised commitments, leaked internals and third-party emails. Fails *closed*: if it can't verify the draft, a safe fallback is sent instead. |
 | 12 | State write | The Orchestrator is the only writer. It merges each agent's `state_patch` (booking, proposed slots, qualification) inside `build_patch(fresh)`, which is re-run on fresh state if a version conflict occurs. |
 | 14 | Lead summary | On goodbye, or later from the idle sweeper, the Lead-Summary agent builds the summary, scores it deterministically, and decides through a tool call to send, update or skip the sales email. |
 
@@ -137,7 +137,8 @@ Concrete cases:
 | Search crashes (e.g. database down) | - | "I couldn't look that up just now..." | `error`, `agent_errors` |
 | In `sequence`, Search fails, Scheduler works | - | Search's fallback line + real slots | `agent_errors` for search only |
 | Resend down at lead time | 3, then queue | nothing (visitor is gone) | `fallback: queued_for_retry`; drained every 2 min |
-| Whole turn throws | - | honest message with the founder's email (FR-8.4) | `error` from the API layer |
+| Model call hangs (provider overloaded) | 30 s timeout per call, then 3 attempts with backoff | the agent's fallback reply | `retry`, `fallback` |
+| Whole turn throws | - | honest "please send that again" reply, **also saved to the session** so a reload never shows an unanswered message (FR-8.4) | `error` with the traceback (`Orchestrator._turn_failed`) |
 
 ---
 
@@ -151,7 +152,12 @@ Concrete cases:
   partial unique index allows only one live (`active`/`booked`) session per key, and creation uses
   `insert ... on conflict do nothing`, so two tabs racing on their first message converge on one row.
 - **Everything else is keyed by `session_id`.** Messages, logs, the email outbox row and the Langfuse
-  session all hang off the session id. Every query filters by it, so one visitor's turn can never read
+  session all hang off the session id. **The database enforces this, not just the code**: the app
+  connects as a restricted role (`closefuture_app`) under row-level security, and every query first
+  sets `app.visitor_key` / `app.session_id` for the connection (`Store._scoped`). The RLS policies only
+  return or accept rows for that visitor/session, so even a bug in a query cannot read or write another
+  visitor's data. Only the background jobs that must scan all sessions (idle sweep, expiry, email-queue
+  drain) use a separate admin connection. Every query also filters by session id, so one visitor's turn can never read
   another visitor's history. The outbound guardrail additionally blocks any email address the current
   visitor didn't type.
 - **Coming back.** `/api/history?visitor_key=...` returns the live session's messages, and the widget
