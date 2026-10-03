@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     # Google Calendar
     GOOGLE_CALENDAR_ID: str
     GOOGLE_SERVICE_ACCOUNT_JSON: str
+    # Calendar owner's own OAuth credentials (scripts/google_oauth_setup.py). When the refresh token is
+    # set, the calendar server acts as the owner: a service account cannot invite attendees or add Meet
+    # links on a personal Gmail calendar ("forbiddenForServiceAccounts").
+    GOOGLE_OAUTH_CLIENT_ID: str = ""
+    GOOGLE_OAUTH_CLIENT_SECRET: str = ""
+    GOOGLE_OAUTH_REFRESH_TOKEN: str = ""
     CALENDAR_OWNER_TZ: str = "Asia/Kolkata"
     BUSINESS_HOURS: str = "10:00-18:00"
     SLOT_MINUTES: int = 30

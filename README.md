@@ -67,9 +67,21 @@ does by default.
    this is just your email address).
 8. Set `CALENDAR_OWNER_TZ` (e.g. `Asia/Kolkata`) and `BUSINESS_HOURS` (e.g. `10:00-18:00`).
 
-**About Meet links.** A plain service account cannot always attach a Meet conference or send invites on
-a personal Gmail calendar. If `hangoutLink` comes back empty or invites do not arrive, use
-**Option B**: Google Workspace domain-wide delegation. In the service account, enable
+**Booking with invites and Meet links (required for a personal Gmail calendar).** Google lets a service
+account read free/busy, but refuses it attendee invites (`403 forbiddenForServiceAccounts`) and Meet
+links. Sign the calendar server in as the calendar owner instead:
+
+1. Google Cloud console -> APIs & Services -> Credentials -> Create credentials -> OAuth client ID ->
+   *Desktop app*. Put the id/secret in `.env` as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET`.
+   On the OAuth consent screen, add the calendar owner as a test user.
+2. Run `python scripts/google_oauth_setup.py`, sign in as the calendar owner in the browser that opens.
+   The refresh token is written into `.env` (never printed).
+3. Restart the calendar MCP server. With `GOOGLE_OAUTH_REFRESH_TOKEN` set it acts as the owner;
+   without it, it falls back to the service account.
+4. **Publish the app** (OAuth consent screen -> *Publish app*): while it stays in "Testing", Google
+   expires the refresh token after 7 days and bookings fail with `invalid_grant` until you re-run step 2.
+
+**Option B for Google Workspace:** domain-wide delegation. In the service account, enable
 *domain-wide delegation*; in the Workspace admin console under
 *Security -> API controls -> Domain-wide delegation*, authorise the client ID with scope
 `https://www.googleapis.com/auth/calendar`; then set `GOOGLE_IMPERSONATE_USER=you@yourdomain.com` in
@@ -287,7 +299,8 @@ how concurrent visitors are kept in separate sessions are explained in **ARCHITE
 | `function match_chunks does not exist` | Run `sql/002_functions.sql` |
 | Ingest fails on dimensions | Embedding model and the `vector(1536)` column must agree |
 | Calendar 404 on insert | The service account has not been shared on that calendar, or `GOOGLE_CALENDAR_ID` is wrong |
-| Event created but no Meet link / no invite | Use domain-wide delegation and set `GOOGLE_IMPERSONATE_USER` (section 2.2, Option B) |
+| Booking fails with `403 forbiddenForServiceAccounts`, or no Meet link / invite | Sign in as the calendar owner: `python scripts/google_oauth_setup.py`, then restart the calendar server (section 2.2) |
+| Booking fails with `invalid_grant: Token has been expired or revoked` | The OAuth app is still in "Testing" (7-day tokens). Re-run `scripts/google_oauth_setup.py` and publish the app |
 | Resend 403 | Sending domain not verified - use `onboarding@resend.dev` while testing |
 | Bot declines everything | The corpus was never ingested; run `python -m app.rag.ingest` |
 | asyncpg SSL/pooler errors | Use the session-pooler URI from Supabase, and keep `statement_cache_size=0` (already set) |

@@ -29,11 +29,19 @@ _service = None
 def service():
     global _service
     if _service is None:
-        info = json.loads(base64.b64decode(settings.GOOGLE_SERVICE_ACCOUNT_JSON))
-        creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-        subject = os.getenv("GOOGLE_IMPERSONATE_USER")
-        if subject:
-            creds = creds.with_subject(subject)
+        if settings.GOOGLE_OAUTH_REFRESH_TOKEN:
+            # act as the calendar owner: the only way to send invites + Meet links on a Gmail calendar
+            from google.oauth2.credentials import Credentials
+            creds = Credentials(
+                token=None, refresh_token=settings.GOOGLE_OAUTH_REFRESH_TOKEN,
+                client_id=settings.GOOGLE_OAUTH_CLIENT_ID, client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                token_uri="https://oauth2.googleapis.com/token", scopes=SCOPES)
+        else:
+            info = json.loads(base64.b64decode(settings.GOOGLE_SERVICE_ACCOUNT_JSON))
+            creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+            subject = os.getenv("GOOGLE_IMPERSONATE_USER")
+            if subject:
+                creds = creds.with_subject(subject)
         _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
     return _service
 
