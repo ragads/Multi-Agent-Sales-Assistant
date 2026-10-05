@@ -1,6 +1,6 @@
 """FastAPI entrypoint. Run: uvicorn app.main:app --reload"""
 from __future__ import annotations
-import html, json
+import asyncio, html, json
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -22,7 +22,16 @@ from app.state.store import SessionBusyError, store
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await store.connect()
+    # a brief network or DNS blip at boot must not kill the API: retry the database a few times
+    for attempt in range(1, 6):
+        try:
+            await store.connect()
+            break
+        except Exception as exc:  # noqa: BLE001
+            if attempt == 5:
+                raise
+            print(f"database not reachable yet ({type(exc).__name__}: {exc}) - retrying in 3s", flush=True)
+            await asyncio.sleep(3)
     schemas = await hub.load_schemas()
     await log_event("lifecycle", trace_id=new_trace_id(), agent="app",
                     payload={"event": "startup", "mcp_tools": [s["name"] for s in schemas]})

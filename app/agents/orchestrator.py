@@ -53,7 +53,9 @@ Keys: {"reply": str}"""
 
 SMALLTALK_SYS = """You are CloseFuture's website assistant: an AI product studio that builds web and
 mobile apps in 4-6 weeks. Reply to this greeting or chit-chat in at most two sentences and invite a
-real question or a call. Never invent facts about the company.
+real question or a call. Never invent facts about the company. Never say you have booked, moved,
+cancelled or sent anything - you take no actions; if the visitor asks for one, say you'll need a moment
+to look at it and ask them to confirm what they'd like.
 Keys: {"reply": str}"""
 
 
@@ -165,19 +167,29 @@ class Orchestrator:
             req = AgentRequest(session_id=state.id, trace_id=trace_id, message=message, state=state)
 
             # ---- 2. classify (FR-3.2) ----
-            try:
-                cls = await complete_json(
-                    CLASSIFY_SYS,
-                    f"Conversation so far:\n{state.transcript() or '(none)'}\n\n"
-                    f"Existing booking: {json.dumps(state.booking) if state.booking else 'none'}\n\n"
-                    f"Newest message: {message}",
-                    max_tokens=600, name="orchestrator.classify",
-                )
-            except Exception as exc:  # noqa: BLE001
-                cls = {"intents": [{"intent": "search", "confidence": 0.5}],
-                       "qualification_signals": {}, "reasoning": f"classifier failed: {exc}"}
-
-            intents = [i for i in cls.get("intents", []) if i.get("intent")]
+            cls, intents = {}, []
+            # Two tries: small models occasionally return empty or malformed JSON, and a message with
+            # no intent must never fall through to small talk - "cancel my booking" would get a chatty
+            # reply that claims an action nobody took.
+            for _attempt in range(2):
+                try:
+                    cls = await complete_json(
+                        CLASSIFY_SYS,
+                        f"Conversation so far:\n{state.transcript() or '(none)'}\n\n"
+                        f"Existing booking: {json.dumps(state.booking) if state.booking else 'none'}\n\n"
+                        f"Newest message: {message}",
+                        max_tokens=600, name="orchestrator.classify",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    cls = {"intents": [{"intent": "search", "confidence": 0.5}],
+                           "qualification_signals": {}, "reasoning": f"classifier failed: {exc}"}
+                intents = [i for i in (cls.get("intents") or []) if isinstance(i, dict) and i.get("intent")]
+                if intents:
+                    break
+            if not intents:
+                # still nothing usable: ask, rather than guess (FR-3.6)
+                intents = [{"intent": "search", "confidence": 0.0}]
+                cls["reasoning"] = (cls.get("reasoning") or "") + " | classifier returned no intents twice"
             intents.sort(key=lambda i: float(i.get("confidence", 0)), reverse=True)
             signals = {k: v for k, v in (cls.get("qualification_signals") or {}).items() if v}
             top_conf = float(intents[0].get("confidence", 0)) if intents else 0.0
