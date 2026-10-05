@@ -34,7 +34,7 @@ Visitor ──► Orchestrator ──┬──► Search Agent ─────�
 
 1. Create a project at supabase.com. Note the region.
 2. **SQL Editor -> New query** and run `sql/001_schema.sql`, then `sql/002_functions.sql`, then
-   `sql/003_session_hardening.sql` (session lease lock, offered slots, one live session per visitor).
+   `sql/006_session_hardening.sql` (session lease lock, offered slots, one live session per visitor).
    `001` enables the `vector` extension itself, so nothing else is needed. On an existing database,
    running `003` alone is enough.
 3. **Settings -> API**: copy `Project URL` into `SUPABASE_URL` and the `service_role` key into
@@ -267,7 +267,7 @@ are still recording.
 | FR | Where it lives |
 |---|---|
 | FR-1.1 - 1.6 | `app/rag/corpus/` (14 docs from the profile only), `app/rag/chunker.py`, `app/rag/ingest.py`, `chunks` table with `category` + `source_ref` |
-| FR-2.1 - 2.6 | `sql/001_schema.sql`, `sql/003_session_hardening.sql`, `app/state/store.py` (lease lock, optimistic lock with re-derived patches, sliding expiry, append-only messages), widget `visitorKey()` + `restoreHistory()` |
+| FR-2.1 - 2.6 | `sql/001_schema.sql`, `sql/006_session_hardening.sql`, `app/state/store.py` (lease lock, optimistic lock with re-derived patches, sliding expiry, append-only messages), widget `visitorKey()` + `restoreHistory()` |
 | FR-3.1 - 3.9 | `app/contracts.py`, `app/agents/orchestrator.py`, `app/mcp_client.py`, `app/jobs/sweeper.py` |
 | FR-4.1 - 4.7 | `app/agents/search.py`, `app/rag/retriever.py`, `sql/002_functions.sql` |
 | FR-5.1 - 5.8 | `app/mcp_servers/calendar_server.py`, `app/booking_rules.py`, `app/agents/scheduler.py`, `app/mcp_servers/auth.py` |
@@ -293,7 +293,7 @@ how concurrent visitors are kept in separate sessions are explained in **ARCHITE
 | `/health` shows `mcp_tools: []` | MCP servers not running, or wrong `MCP_*_URL`. Start them, restart the API |
 | MCP server log shows `401` / schema load fails with an auth error | `MCP_CALENDAR_TOKEN` / `MCP_EMAIL_TOKEN` differ between the API and the server - both must read the same `.env` |
 | `[CONFIG ERROR] ... at least 32 characters` | Generate the MCP tokens as in section 2.5 |
-| `column "proposed_slots" does not exist` / `no unique or exclusion constraint matching the ON CONFLICT` | Run `sql/003_session_hardening.sql` |
+| `column "proposed_slots" does not exist` / `no unique or exclusion constraint matching the ON CONFLICT` | Run `sql/006_session_hardening.sql` |
 | Reply "I'm still working on your previous message" | Two messages for one session arrived together; the second waited `SESSION_LOCK_WAIT_S` for the first. Normal under a double-send; raise the wait if turns are genuinely slower |
 | `relation "chunks" does not exist` | Run `sql/001_schema.sql` in the Supabase SQL editor |
 | `function match_chunks does not exist` | Run `sql/002_functions.sql` |

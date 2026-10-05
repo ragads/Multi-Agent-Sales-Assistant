@@ -1,5 +1,5 @@
 -- Session hardening: lease lock, offered slots, one live session per visitor.
--- Run after 001 and 002 (Supabase SQL editor, or psql "$SUPABASE_DB_URL" -f sql/003_session_hardening.sql)
+-- Run after 001-005 (Supabase SQL editor, or psql "$SUPABASE_DB_URL" -f sql/006_session_hardening.sql)
 
 -- Slots returned by propose_slots, so create_event can only book a slot the server actually offered.
 alter table sessions add column if not exists proposed_slots jsonb not null default '[]'::jsonb;
