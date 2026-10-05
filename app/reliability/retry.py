@@ -20,6 +20,9 @@ def retry_after(error: AgentError) -> float | None:
     """Seconds a rate-limited (429) provider asked us to wait, if it said."""
     if "429" not in error.error_code and "429" not in error.message[:40]:
         return None
+    if "PerDay" in error.message:
+        # a DAILY quota will not clear in "Ns" - waiting just holds the visitor for minutes
+        return None
     m = _RETRY_IN.search(error.message)
     return float(m.group(1) or m.group(2)) if m else None
 
@@ -75,8 +78,8 @@ async def with_retry(
                 await log_event("retry", trace_id=trace_id, session_id=session_id, agent=agent,
                                 payload={"tool": tool, "attempt": attempt, "error_code": last.error_code,
                                          "retryable": last.retryable, "message": last.message[:300]})
-            if not last.retryable or attempt == attempts:
-                break
+            if not last.retryable or attempt == attempts or "PerDay" in last.message:
+                break   # non-retryable, out of attempts, or a daily quota that retrying cannot fix
             delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
             wait = retry_after(last)
             if wait is not None:   # a rate limit says when to come back; 1s/2s/4s would just be refused again

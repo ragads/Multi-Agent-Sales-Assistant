@@ -167,50 +167,52 @@ for a demo, not for real visitor data in production.
 half-configured deployment that silently mocks a calendar is exactly the prototype behaviour the FRD
 rules out.
 
-## 13. Agent framework: hand-built orchestrator, sub-agents and tool loop (no LangGraph or AutoGen)
+## 13. Agent framework: LangGraph orchestrates the turn; agents, state and tool policy stay ours
 
-The multi-agent system is built directly on the OpenAI SDK and plain Python rather than on an agent
-framework such as LangGraph or AutoGen. All three pieces a framework would normally provide are our own
-code:
+The Orchestrator's turn runs as a **LangGraph `StateGraph`** (`app/agents/graph.py`), the default
+engine (`ORCHESTRATOR_ENGINE=langgraph`):
 
-- **Orchestrator** - `app/agents/orchestrator.py` is an ordinary class. Each turn runs the same fixed
-  pipeline: inbound guardrail -> classify -> route -> compose -> outbound guardrail -> merge state ->
-  log. Routing is explicit code in `_route()`, including the multi-intent policy (sequence, parallel
-  via `asyncio.gather`, or clarify) from decision 5.
-- **Sub-agents** - Search, Scheduler, Lead-Summary and Guardrail are plain async functions that take an
-  `AgentRequest` and return an `AgentResponse` (`app/contracts.py`). The Pydantic contract is the whole
-  interface between agents; there are no framework node or edge types.
-- **Tool loop** - `run_with_tools()` in `app/llm.py` is a ~50-line OpenAI tool-calling loop with a
-  `max_turns` cap. The Scheduler (calendar tools, discovered from the calendar MCP server) and the
-  Lead-Summary agent (email tools) both run on it. Each agent passes its own `call_tool` callback,
-  which is the policy boundary described in decision 14.
+```
+START -> inbound --(blocked)--> END
+            \-> classify -> decide --(route)--> clarify | close | ack | smalltalk | search
+                                                 | scheduler | sequence | parallel | conflict
+                                              -> compose -> guardrail -> persist -> END
+```
 
-Why not LangGraph or AutoGen (AutoGen models agents as participants in a free-form group chat, which
-suits open-ended collaboration but not a fixed, auditable routing policy; the points below apply to
-both):
+- **Nodes** are the Orchestrator's step functions (`step_inbound`, `step_classify`, one `route_*` per
+  route, `step_compose`, `step_guardrail`, `step_persist` in `app/agents/orchestrator.py`). Each takes
+  the turn state and returns only the keys it changes.
+- **Conditional edges** are the routing policy: `decide` runs `decide_route()` (`app/agents/routing.py`,
+  a pure function, unit-tested offline), and its result picks the next node - the multi-intent policy of
+  decision 5 and the confidence floor of decision 4 are now visible graph structure, not buried `if`s.
+- **Observability:** every node appends itself to `path`, so each `routing_decision` log row records the
+  exact route the turn took (`graph_path`, e.g. inbound -> classify -> decide -> sequence -> compose ->
+  guardrail -> persist). `turn_graph.get_graph().draw_mermaid()` renders the graph.
+- **A switch, not a fork:** `ORCHESTRATOR_ENGINE=native` runs the same step functions in order without
+  LangGraph. There is one implementation of each step, so the two engines cannot drift apart.
 
-- **The control flow is small and mostly fixed.** A turn is one routing decision followed by at most
-  two sub-agent calls, not a long-running graph with cycles. A graph DSL would add a layer of
-  abstraction without adding anything we need.
-- **The FRD requires tight control over exactly the parts a framework would own.** State lives in
-  Supabase with optimistic locking and only the Orchestrator writes it (decision 6). The guardrail runs
-  at exactly two checkpoints (decision 10). Errors have the exact FR-8.3 shape, retries follow our own
-  retryable/non-retryable split (decision 7), and every routing decision is logged with its reason
-  (FR-3.9). LangGraph's checkpointer would be a second copy of session state that had to be kept in
-  sync with the `sessions` table that the abandoned-session sweeper reads.
-- **Traceability and debugging.** Every step is ordinary code that writes to our own `logs` table, so
-  the full trace for a conversation is at `/session/{id}`, and a stack trace points at our code rather
-  than framework internals. Model-level tracing comes from Langfuse (decision 17), which wraps the
-  OpenAI client directly, so it needs no framework either.
-- **Fewer dependencies.** `requirements.txt` stays small and avoids the LangChain dependency tree and
-  its frequent API changes.
+What LangGraph deliberately does **not** own, and why:
 
-Trade-offs: we don't get built-in checkpoint/resume, human-in-the-loop interrupts, graph visualisation
-or streaming helpers, and we had to write and test the tool loop ourselves (including the `max_turns`
-guard against runaway tool calls). If the system grows to many agents with handoffs or cycles, this
-should be revisited. Because each agent is already a function from `AgentRequest` to `AgentResponse`,
-each one would map almost one-to-one onto a LangGraph node, so a later migration would not require a
-rewrite.
+- **Session state and memory.** No LangGraph checkpointer is attached. State lives in Supabase under
+  row-level security (decision 18), the session lease and optimistic writes (decision 6), and the idle
+  sweeper and RLS policies depend on the `sessions` table. A checkpointer would be a second copy of the
+  same state to keep consistent, and it could not enforce per-visitor RLS. The graph's state is per-turn
+  scratch space; it starts from Supabase and ends by writing back to it in `persist`.
+- **The tool-calling loop.** The Scheduler and Lead-Summary agents keep `run_with_tools()` instead of a
+  prebuilt ToolNode/ReAct agent, because each agent's `call_tool` function is the policy boundary of
+  decision 14: it hides code-owned arguments from the model, validates the rest, and returns structured
+  errors the model can recover from. That boundary is the point of the design, not plumbing to replace.
+- **Sub-agents** stay plain async functions with the `AgentRequest -> AgentResponse` contract
+  (`app/contracts.py`), so each is testable on its own and is called identically by either engine.
+
+Why LangGraph rather than AutoGen: AutoGen models agents as participants in a free-form group chat,
+which suits open-ended collaboration but not a fixed, auditable routing policy where every turn must
+follow a known path. LangGraph's explicit graph matches that requirement.
+
+Trade-offs: one more dependency tree (langgraph + langchain-core), and a turn is a little harder to
+step through in a debugger than a straight function. In exchange the control flow is declared rather
+than implied, every turn's path is logged, and adding a new route (say, a "pricing quote" agent) is one
+node, one edge and one line in `decide_route()`.
 
 ## 14. Tool calling: the model chooses the action, code owns the arguments that matter
 

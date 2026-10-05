@@ -158,3 +158,41 @@ def test_rate_limit_wait_is_read_from_the_provider():
 def test_email_pattern_ignores_a_trailing_full_stop():
     from app.agents.guardrail import EMAIL_RE
     assert EMAIL_RE.findall("The invite is on its way to you@gmail.com.") == ["you@gmail.com"]
+
+
+# ---------------- routing policy (shared by the native and LangGraph engines) ----------------
+
+def _route(*intents, conf=0.9):
+    from app.agents.routing import decide_route
+    return decide_route([{"intent": i, "confidence": conf} for i in intents], conf, floor=0.60)["route"]
+
+
+def test_routing_policy_picks_the_right_route():
+    assert _route("search") == "search"
+    assert _route("schedule") == "scheduler"
+    assert _route("search", "schedule") == "sequence"          # question + booking
+    assert _route("search", "search") == "parallel"            # two independent questions
+    assert _route("schedule", "cancel") == "conflict"          # contradictory booking asks
+    assert _route("search", conf=0.3) == "clarify"             # below the confidence floor
+    assert _route("end_conversation") == "close"
+    assert _route("provide_info") == "ack"
+    assert _route("smalltalk") == "smalltalk"
+
+
+def test_langgraph_turn_graph_has_every_route():
+    import pytest
+    try:
+        from app.agents.graph import turn_graph
+        from app.agents.routing import ROUTES
+    except Exception as exc:  # needs the real settings / packages
+        pytest.skip(f"graph not importable in this environment: {exc}")
+    nodes = set(turn_graph.get_graph().nodes)
+    assert {"inbound", "classify", "decide", "compose", "guardrail", "persist", *ROUTES} <= nodes
+
+
+def test_daily_quota_is_not_waited_out():
+    from app.contracts import AgentError
+    from app.reliability.retry import retry_after
+    daily = AgentError(error_code="UPSTREAM_429", retryable=True, agent="llm",
+                       message="Error code: 429 ... quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier ... retry in 40s")
+    assert retry_after(daily) is None

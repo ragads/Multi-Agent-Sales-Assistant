@@ -89,7 +89,12 @@ def _rule_error(exc: SlotRuleError) -> dict:
 def _unreachable(exc: Exception) -> dict:
     """A structured, retryable error naming the real cause (timeout, DNS, Google 5xx...), instead of
     FastMCP's generic "Error calling tool", so the trace says why the calendar was unreachable."""
+    global _service
     status = getattr(getattr(exc, "resp", None), "status", None)
+    if status is None:
+        # A transport failure (aborted/reset connection, timeout, DNS): the cached client keeps its dead
+        # keep-alive connection and every retry would fail the same way, so drop it and reconnect.
+        _service = None
     retryable = status is None or status in (408, 429, 500, 502, 503, 504)
     return {"status": "error", "error_code": f"CALENDAR_{status}" if status else "CALENDAR_UNREACHABLE",
             "retryable": retryable, "message": f"{type(exc).__name__}: {exc}"[:300], "agent": "calendar_mcp"}
@@ -182,8 +187,11 @@ def create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name:
     """
     # check-then-insert must be atomic, or two simultaneous visitors can both pass the check (FR-5.5)
     with _BOOK_LOCK:
-        return _create_event(start_iso, end_iso, visitor_email, visitor_name, notes,
-                             idempotency_key, manage_url)
+        try:
+            return _create_event(start_iso, end_iso, visitor_email, visitor_name, notes,
+                                 idempotency_key, manage_url)
+        except Exception as exc:  # noqa: BLE001 - transport errors: reconnect and report the cause
+            return _unreachable(exc)
 
 
 def _create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name: str,
@@ -251,7 +259,10 @@ def modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
     both claim the same free slot.
     """
     with _BOOK_LOCK:
-        return _modify_event(event_id, new_start_iso, new_end_iso)
+        try:
+            return _modify_event(event_id, new_start_iso, new_end_iso)
+        except Exception as exc:  # noqa: BLE001
+            return _unreachable(exc)
 
 
 def _modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
@@ -291,6 +302,8 @@ def cancel_event(event_id: str) -> dict:
     except HttpError as exc:
         return {"status": "error", "error_code": f"CALENDAR_{exc.resp.status}",
                 "retryable": exc.resp.status >= 500, "message": str(exc), "agent": "calendar_mcp"}
+    except Exception as exc:  # noqa: BLE001 - transport errors: reconnect and report the cause
+        return _unreachable(exc)
     return {"status": "ok", "cancelled": event_id}
 
 

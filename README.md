@@ -277,7 +277,7 @@ are still recording.
 | Observability | `app/observability/logger.py`, `app/llm.py` (`llm_call` rows, Langfuse) |
 
 Design justifications the FRD asks for (chunk size, top-k, confidence, multi-intent, concurrency,
-retries, scoring), plus the choice to hand-build the agent framework instead of using LangGraph, tool
+retries, scoring), plus how LangGraph orchestrates the turn (and what it deliberately does not own), tool
 calling, MCP auth, booking rules and observability, are in **DECISIONS.md**.
 
 How a message moves through the system end to end, how agents hand off work and report failures, and

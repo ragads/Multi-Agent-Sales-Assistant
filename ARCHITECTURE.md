@@ -26,26 +26,43 @@ Orchestrator.handle()                                   app/agents/orchestrator.
   ├─ 2  new trace_id; bind trace_id + session_id        llm.bind_trace (every LLM call below is tagged)
   ├─ 3  take the session lease                          store.session_lock   (one turn per session)
   │
-  └─ _turn()
-      ├─ 4  inbound guardrail                           guardrail.check_inbound  -> block? reply + stop
+  └─ _turn()  ->  LangGraph turn_graph.ainvoke()       app/agents/graph.py  (graph node in [brackets])
+      ├─ 4  inbound guardrail             [inbound]     guardrail.check_inbound  -> block? reply + END
       ├─ 5  save visitor message (append-only)          store.append_message
-      ├─ 6  classify intents + qualification signals    LLM "orchestrator.classify"
-      ├─ 7  route                                       _route()
-      │       search + schedule  ->  policy "sequence":
+      ├─ 6  classify intents + signals    [classify]    LLM "orchestrator.classify"
+      ├─ 7  route                         [decide]      decide_route() -> conditional edge
+      │       search + schedule  ->  route "sequence"   [sequence]:
       │         ├─ Search agent      rewrite (LLM) -> pgvector match_chunks -> grounded answer (LLM)
       │         └─ Scheduler agent   tool loop (LLM) -> call_tool guard -> MCP propose_slots
       │                                                  -> calendar server -> Google freebusy
-      ├─ 8  failed sub-agent? substitute its fallback text, record agent_errors
-      ├─ 9  compose draft = Search answer + Scheduler reply
-      ├─ 10 outbound guardrail                          guardrail.check_outbound -> block? safe fallback
-      ├─ 11 save assistant message                      store.append_message
+      ├─ 8  failed sub-agent? substitute its fallback text, record agent_errors   [compose]
+      ├─ 9  compose draft = Search answer + Scheduler reply                        [compose]
+      ├─ 10 outbound guardrail            [guardrail]   guardrail.check_outbound -> block? safe fallback
+      ├─ 11 save assistant message        [persist]     store.append_message
       ├─ 12 apply state patches (optimistic lock)       store.update_with_retry(build_patch)
-      ├─ 13 log routing_decision (reason, policy, intents, confidences, agent_errors)
+      ├─ 13 log routing_decision (reason, policy, intents, graph_path, agent_errors)
       └─ 14 visitor said goodbye? -> Lead-Summary agent (lease already held)
   │
   ▼  release lease
 {reply, slots, session_id, trace_id}  ->  widget renders the answer and clickable slot buttons
 ```
+
+The turn itself (steps 4-14) is a **LangGraph `StateGraph`**. Its routing policy is the set of
+conditional edges out of `decide`:
+
+```mermaid
+graph TD
+  START([start]) --> inbound
+  inbound -. blocked .-> END([end])
+  inbound --> classify --> decide
+  decide -.-> clarify & close & ack & smalltalk & search & scheduler & sequence & parallel & conflict
+  clarify & close & ack & smalltalk & search & scheduler & sequence & parallel & conflict --> compose
+  compose --> guardrail --> persist --> END
+```
+
+Each node is one of the Orchestrator's step functions, and every turn logs the path it took
+(`graph_path`). Session state stays in Supabase rather than a LangGraph checkpointer; DECISIONS.md,
+decision 13 explains why. `ORCHESTRATOR_ENGINE=native` runs the same steps without LangGraph.
 
 What happens at each step, and why:
 

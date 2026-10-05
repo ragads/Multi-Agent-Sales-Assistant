@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # it; this bounds how often, since each call reaches the Google Calendar API.
     RATE_BOOKING_PER_MIN: int = 20
 
+    # Orchestration engine for a turn: "langgraph" runs it as a LangGraph StateGraph (app/agents/graph.py),
+    # "native" runs the same step functions in order. Same steps, same behaviour - see decision 13.
+    ORCHESTRATOR_ENGINE: str = "langgraph"
+
     # Session lease lock (see DECISIONS.md, decision 6)
     SESSION_LOCK_TTL_S: float = 60.0
     SESSION_LOCK_WAIT_S: float = 45.0
