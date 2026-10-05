@@ -195,7 +195,11 @@ async def run(req: AgentRequest) -> AgentResponse:
 
         try:
             # No lock here: the Orchestrator holds the session lease for the whole turn (FR-2.6)
-            reply = await run_with_tools(SYS + "\n\nSESSION STATE\n" + state_note,
+            scope = ("\n\nNOTE: the visitor's message also asks a question about CloseFuture. A colleague "
+                     "answers it in this same reply, so handle ONLY the booking. Do not answer questions about "
+                     "the company, timelines, prices or services, and do not repeat the question."
+                     if req.params.get("question_handled_separately") else "")
+            reply = await run_with_tools(SYS + scope + "\n\nSESSION STATE\n" + state_note,
                                          messages, tools, call_tool, max_tokens=700,
                                          name="scheduler.tools")
         except ToolFailure as tf:

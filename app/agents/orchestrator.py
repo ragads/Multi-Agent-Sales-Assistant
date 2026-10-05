@@ -180,7 +180,26 @@ class Orchestrator:
 
             # ---- 5. outbound guardrail, owned here only (FR-3.8, FR-7.1) ----
             outbound = await guardrail.check_outbound(req, draft, context=context)
-            if outbound.verdict == "block":
+            parts = [r for r in responses if r.reply]
+            if outbound.verdict == "block" and len(parts) > 1:
+                # A multi-agent reply: find which part tripped the guardrail and replace only that part,
+                # so one agent's bad sentence doesn't take the other agent's valid answer (e.g. real
+                # calendar slots) down with it. Each part is judged against its own verified facts.
+                kept, slots_ok = [], False
+                for r in parts:
+                    facts = "\n\n".join((r.output or {}).get("verified_facts", [])
+                                        + [f"source: {c}" for c in r.citations])
+                    v = await guardrail.check_outbound(req, r.reply, context=facts)
+                    if v.verdict == "allow":
+                        kept.append(r.reply)
+                        slots_ok = slots_ok or bool((r.output or {}).get("slots"))
+                    else:
+                        kept.append(v.safe_fallback or outbound.safe_fallback)
+                draft = "\n\n".join(kept)
+                if not slots_ok:
+                    slots = []
+                decision["guardrail_partial"] = True
+            elif outbound.verdict == "block":
                 draft = outbound.safe_fallback or draft
                 slots = []
 
@@ -273,8 +292,15 @@ class Orchestrator:
             decision["multi_intent_policy"] = "sequence"
             decision["reason"] = ("question + booking: answered first, then offered times, because the "
                                   "answer often changes what the visitor wants to book")
-            s1 = await self._call_agent(search.run, req, "search")
-            s2 = await self._call_agent(scheduler.run, req, "scheduler")
+            # Search answers only the question half: the Scheduler offers real times in the same reply,
+            # so Search must not improvise booking advice (invented links, "can't book" disclaimers)
+            s1 = await self._call_agent(
+                search.run, req.model_copy(update={"params": {**req.params, "booking_handled_separately": True}}),
+                "search")
+            # ...and the Scheduler handles only the booking half, so it never answers the question itself
+            s2 = await self._call_agent(
+                scheduler.run, req.model_copy(update={"params": {**req.params, "question_handled_separately": True}}),
+                "scheduler")
             decision["chosen_agents"] = ["search", "scheduler"]
             slots = s2.output.get("slots", []) if s2.output else []
             return decision, [s1, s2], slots

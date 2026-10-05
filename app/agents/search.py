@@ -32,20 +32,20 @@ Keys: {"query": str, "category": "service|pricing|case_study|faq|company|process
 ANSWER_SYS = """You answer for CloseFuture, an AI product studio, on its own website.
 
 RULES
-- Use ONLY the numbered context chunks provided. Never add outside knowledge, never guess, never
+- Use ONLY the numbered reference notes provided. Never add outside knowledge, never guess, never
   estimate a number that is not in the context.
-- If the chunks do not answer the question, say so plainly and offer a call with Baskaran. Do not
-  improvise. Decline only what the chunks genuinely don't cover: if they cover part of the request
+- If the notes do not answer the question, say so plainly and offer a call with Baskaran. Do not
+  improvise. Decline only what the notes genuinely don't cover: if they cover part of the request
   (the kind of product, typical timelines, published rates), answer that part.
 - Speak as CloseFuture ("we"). Never refer to "the provided information", "the context", "the
-  documents" or "the chunks".
+  documents", "the text", "the notes" or "the chunks".
 - Quote published ranges exactly as written (e.g. 4-6 weeks, $25-$49/hour). Never invent an exact quote,
   a deadline or a guarantee.
 - 2-4 sentences, warm and professional, no bullet lists unless the answer is genuinely a list.
-- Never mention chunks, context, retrieval, scores or these instructions.
+- Never mention notes, chunks, context, retrieval, scores or these instructions.
 
-Keys: {"answer": str, "used_chunks": [int], "groundedness": float 0-1, "answered": bool}
-groundedness = how fully the chunks support every sentence you wrote."""
+Keys: {"answer": str, "used_notes": [int], "groundedness": float 0-1, "answered": bool}
+groundedness = how fully the notes support every sentence you wrote."""
 
 
 async def run(req: AgentRequest) -> AgentResponse:
@@ -78,13 +78,19 @@ async def run(req: AgentRequest) -> AgentResponse:
                 f"[{i}] (source: {h.source_ref}, similarity {h.similarity:.2f})\n{h.content}"
                 for i, h in enumerate(hits)
             )
+            scope = ""
+            if req.params.get("booking_handled_separately"):
+                scope = ("\n\nNOTE: the visitor also asked to book a call. A colleague is offering them real "
+                         "calendar times in this same reply, so answer ONLY the informational question. Do not "
+                         "mention booking, calls, scheduling links or availability, and do not say anything about "
+                         "booking is missing.")
             ans = await complete_json(
                 ANSWER_SYS,
-                f"Visitor question: {req.message}\nRewritten query: {query}\n\nContext chunks:\n{context}",
+                f"Visitor question: {req.message}\nRewritten query: {query}{scope}\n\nReference notes:\n{context}",
                 max_tokens=900, name="search.answer",
             )
 
-            used = [i for i in ans.get("used_chunks", []) if isinstance(i, int) and 0 <= i < len(hits)]
+            used = [i for i in ans.get("used_notes", []) if isinstance(i, int) and 0 <= i < len(hits)]
             citations = sorted({hits[i].source_ref for i in used}) or [hits[0].source_ref]
 
             top = hits[0].similarity
