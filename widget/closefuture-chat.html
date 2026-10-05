@@ -110,7 +110,12 @@
     align-items:center;justify-content:space-between;gap:10px}
   #cf-panel .cf-head b{display:block;font-size:14px}
   #cf-panel .cf-head span{font-size:12px;color:var(--muted)}
-  #cf-panel .cf-close{background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer;line-height:1}
+  #cf-panel .cf-actions{display:flex;gap:4px;flex-shrink:0}
+  #cf-panel .cf-close,#cf-panel .cf-refresh{background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer;
+    line-height:1;width:32px;height:32px;border-radius:8px;display:grid;place-items:center}
+  #cf-panel .cf-refresh{font-size:18px}
+  #cf-panel .cf-close:hover,#cf-panel .cf-refresh:hover{background:#18253f;color:var(--ink)}
+  #cf-panel .cf-refresh:disabled{opacity:.4;cursor:default}
   #cf-log{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
   #cf-panel .msg{padding:9px 12px;border-radius:10px;font-size:14px;line-height:1.45;max-width:86%;white-space:pre-wrap;
     overflow-wrap:anywhere}
@@ -274,7 +279,10 @@
 <div id="cf-panel" role="dialog" aria-label="CloseFuture assistant">
   <div class="cf-head">
     <div><b>CloseFuture assistant</b><span>Ask about our work, or book a call with Baskaran</span></div>
-    <button class="cf-close" aria-label="Close chat">&times;</button>
+    <div class="cf-actions">
+      <button class="cf-refresh" aria-label="Start a new chat" title="Start a new chat">&#8635;</button>
+      <button class="cf-close" aria-label="Close chat" title="Close">&times;</button>
+    </div>
   </div>
   <div id="cf-log"></div>
   <div class="cf-foot">
@@ -331,6 +339,19 @@ function closeChat(){ panel.classList.remove("open"); }
 
 bubble.onclick = () => panel.classList.contains("open") ? closeChat() : openChat();
 panel.querySelector(".cf-close").onclick = closeChat;
+
+// Refresh = start a new conversation. A new visitor key means a new session on the server; the old
+// conversation stays there (and its lead summary still goes out), it just no longer shows here.
+const refreshBtn = panel.querySelector(".cf-refresh");
+refreshBtn.onclick = () => {
+  if(busy) return;   // never mid-reply
+  if(log.querySelector(".msg.visitor") && !confirm("Start a new chat? This conversation will be cleared from this window.")) return;
+  const k = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()+Math.random());
+  try{ localStorage.setItem("cf_visitor_key", k); }catch(e){}
+  log.innerHTML = "";
+  add("bot", GREETING);
+  input.value = ""; input.focus();
+};
 
 // page buttons: "Ask our assistant" opens the chat; data-ask buttons open it and send their question
 document.querySelectorAll("[data-open]").forEach(b => b.onclick = openChat);
