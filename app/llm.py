@@ -59,11 +59,13 @@ def _tracing_kwargs(name: str) -> dict[str, Any]:
                               "session_id": ctx.get("session_id")}.items() if v}
 
 
-async def _create(name: str, **kwargs):
+async def _create(name: str, *, model: str | None = None, **kwargs):
     """One chat.completions call, retried, then logged with its token usage and cost."""
+    model = model or settings.OPENAI_CHAT_MODEL
+
     async def _call():
         return await _client.chat.completions.create(
-            model=settings.OPENAI_CHAT_MODEL, **kwargs, **_tracing_kwargs(name))
+            model=model, **kwargs, **_tracing_kwargs(name))
 
     ctx = _trace.get()
     with timer() as t:
@@ -75,7 +77,7 @@ async def _create(name: str, **kwargs):
     cost = (tin * settings.OPENAI_PRICE_IN_PER_M + tout * settings.OPENAI_PRICE_OUT_PER_M) / 1_000_000
     await log_event("llm_call", trace_id=ctx.get("trace_id") or new_trace_id(),
                     session_id=ctx.get("session_id"), agent=name.split(".")[0],
-                    payload={"call": name, "model": settings.OPENAI_CHAT_MODEL,
+                    payload={"call": name, "model": model,
                              "prompt_tokens": tin, "completion_tokens": tout,
                              "cost_usd": round(cost, 6),
                              "finish_reason": resp.choices[0].finish_reason if resp.choices else None},
@@ -83,10 +85,14 @@ async def _create(name: str, **kwargs):
     return resp
 
 
-async def complete_json(system: str, prompt: str, *, max_tokens: int = 1024, name: str = "llm") -> dict:
-    """Ask for strict JSON via response_format, parsed defensively."""
+async def complete_json(system: str, prompt: str, *, max_tokens: int = 1024, name: str = "llm",
+                        model: str | None = None) -> dict:
+    """Ask for strict JSON via response_format, parsed defensively.
+
+    `model` overrides the chat model - the guardrail can review on a stronger one (GUARDRAIL_MODEL).
+    """
     resp = await _create(
-        name,
+        name, model=model,
         max_completion_tokens=max_tokens,
         temperature=0,
         response_format={"type": "json_object"},

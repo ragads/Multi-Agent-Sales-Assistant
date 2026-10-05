@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""              # takes precedence over OPENAI_API_KEY when set
     LLM_TIMEOUT_S: float = 30.0        # per model call; a slower call is retried by our own retry policy
     OPENAI_CHAT_MODEL: str = "gpt-4o-mini"   # chat model name at whichever provider is configured
+    # Optional stronger model for the guardrail's reviews (a false block costs a conversation).
+    # Blank = same as the chat model. On OpenAI, gpt-4o is a good choice; it must exist at the provider.
+    GUARDRAIL_MODEL: str = ""
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     EMBEDDING_DIMS: int = 1536
 

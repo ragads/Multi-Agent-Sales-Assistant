@@ -6,7 +6,7 @@ which turns any exception into an AgentError, so a failing agent is always repor
 and never breaks the turn. See ARCHITECTURE.md for the full flow.
 """
 from __future__ import annotations
-import asyncio, json, traceback
+import asyncio, json, re, traceback
 from datetime import datetime, timezone
 from typing import Awaitable, Callable
 
@@ -18,6 +18,7 @@ from app.observability.logger import log_event, new_trace_id, timer
 from app.state.store import SessionBusyError, store
 
 AGENT = "orchestrator"
+_MD_LINK = re.compile(r"\[([^\]\n]*)\]\((\S+?)\)")   # [text](url) -> url
 
 CLASSIFY_SYS = """You are the router for CloseFuture's website assistant.
 
@@ -63,7 +64,33 @@ AGENT_FALLBACKS = {
     "scheduler": ("I couldn't reach our calendar just now, so I don't want to promise a slot. If you leave "
                   "your name, email and a time that suits you, Baskaran will confirm by email today."),
 }
-GENERIC_FALLBACK = "Something on our side didn't work just then. Could you try that again in a moment?"
+# A lead worth mailing needs something the recipient can act on; a name alone is not that.
+REPORTABLE_SIGNALS = ("email", "company", "project_type", "budget_hint", "timeline")
+
+
+def _worth_reporting(state: SessionState) -> bool:
+    qual = state.qualification or {}
+    return any(qual.get(k) for k in REPORTABLE_SIGNALS)
+
+
+def booked_now(r: AgentResponse) -> dict | None:
+    """The booking a sub-agent just created this turn (an event id came back from the calendar)."""
+    b = (r.state_patch or {}).get("booking") or {}
+    return b if b.get("event_id") else None
+
+
+def _booking_confirmation(b: dict) -> str:
+    """What was actually booked, used if the guardrail blocks the model's own confirmation."""
+    when = b.get("visitor_label") or b.get("start") or "the time you chose"
+    line = f"You're booked for {when}."
+    if b.get("attendee_email"):
+        line += f" The calendar invite is on its way to {b['attendee_email']}."
+    if b.get("meet_link"):
+        line += f" Google Meet link: {b['meet_link']}"
+    return line + " If anything looks wrong, email baskaran@closefuture.io."
+
+
+GENERIC_FALLBACK ="Something on our side didn't work just then. Could you try that again in a moment?"
 
 
 class Orchestrator:
@@ -171,6 +198,9 @@ class Orchestrator:
             # ---- 4. compose the draft ----
             draft = "\n\n".join(r.reply for r in responses if r.reply).strip() or \
                 "Could you tell me a little more about what you're looking for?"
+            # the widget shows plain text: "[Join](https://meet...)" would render with the markup
+            # showing and the URL buried, so keep the address and drop the brackets
+            draft = _MD_LINK.sub(r"\2", draft)
             # everything the draft may legitimately state: retrieved passages, calendar tool output
             # (slots, booking results) and source names - the outbound guardrail judges against this
             context = "\n\n".join(
@@ -194,13 +224,16 @@ class Orchestrator:
                         kept.append(r.reply)
                         slots_ok = slots_ok or bool((r.output or {}).get("slots"))
                     else:
-                        kept.append(v.safe_fallback or outbound.safe_fallback)
+                        kept.append(_booking_confirmation(booked_now(r)) if booked_now(r)
+                                    else (v.safe_fallback or outbound.safe_fallback))
                 draft = "\n\n".join(kept)
                 if not slots_ok:
                     slots = []
                 decision["guardrail_partial"] = True
             elif outbound.verdict == "block":
-                draft = outbound.safe_fallback or draft
+                booked = next((booked_now(r) for r in responses if booked_now(r)), None)
+                # the calendar created the event: never tell the visitor it isn't booked
+                draft = _booking_confirmation(booked) if booked else (outbound.safe_fallback or draft)
                 slots = []
 
             # ---- 6. merge state: only the Orchestrator writes, by applying sub-agent state_patches ----
@@ -362,6 +395,20 @@ class Orchestrator:
     async def _finalize_locked(self, session_id: str, *, complete: bool, trace_id: str) -> None:
         state = await store.get(session_id)
         if state is None:
+            return
+        booked = bool((state.booking or {}).get("event_id"))
+        if not complete and not booked and not _worth_reporting(state):
+            # An idle session with nothing a salesperson could act on (someone typed a line and left).
+            # Mailing it would bury real leads; close it quietly. A deliberate end always reports.
+            await log_event("lifecycle", trace_id=trace_id, session_id=session_id, agent=AGENT,
+                            payload={"event": "idle_timeout_not_reported",
+                                     "reason": "no contactable or substantive signal captured",
+                                     "turns": len(state.history)})
+            try:
+                await store.update_with_retry(session_id, lambda fresh: {"status": "abandoned"})
+            except Exception as exc:  # noqa: BLE001
+                await log_event("error", trace_id=trace_id, session_id=session_id, agent=AGENT,
+                                payload={"detail": f"abandon status update failed: {exc}"})
             return
         req = AgentRequest(session_id=session_id, trace_id=trace_id, state=state,
                            params={"complete": complete})

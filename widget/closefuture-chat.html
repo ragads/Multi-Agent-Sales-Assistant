@@ -23,6 +23,8 @@
   .slots{display:flex;flex-direction:column;gap:6px;align-self:flex-start;max-width:86%}
   .slot{background:#132443;border:1px solid var(--accent);color:var(--ink);padding:8px 10px;border-radius:8px;
     font-size:13px;cursor:pointer;text-align:left}
+  .slot.picked{outline:2px solid var(--accent);font-weight:600}
+  .slot:disabled{opacity:.45;cursor:default}
   .slot:hover{background:#1a3157}
   .status{font-size:12px;color:var(--muted);align-self:center}
   footer{border-top:1px solid var(--line);padding:10px;display:flex;gap:8px;background:#0e1932}
@@ -101,7 +103,12 @@ function renderSlots(slots){
   slots.forEach((s,i) => {
     const b = document.createElement("button");
     b.className = "slot"; b.textContent = (i+1) + ".  " + (s.visitor_label || s.start_iso);
-    b.onclick = () => { send("I'll take option " + (i+1) + " - " + (s.visitor_label||s.start_iso)); };
+    b.onclick = () => {
+      wrap.querySelectorAll("button.slot").forEach(x => { x.disabled = true; });   // one pick per offer
+      b.classList.add("picked");
+      // send the exact start_iso with the label, so the booking never depends on re-reading "Mon 05 Oct, 09:00 AM"
+      send("I'll take option " + (i+1) + " - " + (s.visitor_label||s.start_iso) + " [start_iso=" + s.start_iso + "]");
+    };
     wrap.appendChild(b);
   });
   log.appendChild(wrap); log.scrollTop = log.scrollHeight;
