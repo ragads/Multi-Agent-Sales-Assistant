@@ -18,6 +18,7 @@ from app.llm import run_with_tools, to_openai_tools
 from app.mcp_client import hub
 from app.observability.logger import log_event, timer
 from app.reliability.retry import ToolFailure
+from app.security import manage_link
 
 AGENT = "scheduler"
 
@@ -26,7 +27,7 @@ CAL_TOOLS = ["propose_slots", "check_availability", "create_event", "modify_even
 # arguments the model never sees or sets - the code supplies them from session state
 CODE_OWNED = {
     "propose_slots": {"visitor_tz"},
-    "create_event": {"idempotency_key", "end_iso"},
+    "create_event": {"idempotency_key", "end_iso", "manage_url"},
     "modify_event": {"event_id", "new_end_iso"},
     "cancel_event": {"event_id"},
 }
@@ -133,7 +134,8 @@ async def run(req: AgentRequest) -> AgentResponse:
                     return rejected("NAME_NOT_GIVEN", "ask the visitor for their name")
                 args.update(start_iso=slot["start_iso"], end_iso=slot["end_iso"], visitor_email=email,
                             visitor_name=name_[:100], notes=str(args.get("notes") or "")[:500],
-                            idempotency_key=f"{req.session_id}:{slot['start_iso']}")
+                            idempotency_key=f"{req.session_id}:{slot['start_iso']}",
+                            manage_url=manage_link(req.session_id))   # signed move/cancel link in the invite
 
             elif name == "modify_event":
                 if not event_id:

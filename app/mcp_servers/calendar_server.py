@@ -7,7 +7,7 @@ the caller sends. Requests need `Authorization: Bearer $MCP_CALENDAR_TOKEN` (app
 Set SIMULATE_CALENDAR_OUTAGE=1 to force transient 503s (used by scripts/simulate_calendar_outage.py).
 """
 from __future__ import annotations
-import base64, hashlib, json, os
+import base64, hashlib, json, os, threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -21,6 +21,10 @@ from app.config import settings
 from app.mcp_servers.auth import serve
 
 mcp = FastMCP("closefuture-calendar")
+
+# Serialises create_event and modify_event: each one checks free/busy and then writes, and two calls
+# interleaving between those steps could both see a slot as free (FR-5.5).
+_BOOK_LOCK = threading.Lock()
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 _service = None
@@ -124,20 +128,52 @@ def propose_slots(visitor_tz: str, days_ahead: int = 5, count: int = 3) -> dict:
             "owner_tz": settings.CALENDAR_OWNER_TZ}
 
 
+def _description(notes: str, manage_url: str) -> str:
+    """Invite body. The manage link is what lets the visitor move or cancel without writing an email."""
+    body = notes or "Discovery call booked via the CloseFuture website assistant."
+    if manage_url:
+        body += ("\n\nNeed a different time, or can no longer make it?\n"
+                 f"Reschedule or cancel here: {manage_url}\n"
+                 "The link is personal to this booking - please don't forward it.")
+    return body
+
+
 @mcp.tool()
 def create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name: str,
-                 notes: str = "", idempotency_key: str = "") -> dict:
+                 notes: str = "", idempotency_key: str = "", manage_url: str = "") -> dict:
     """Book the discovery call: re-checks availability first, adds a Meet link, invites the visitor.
 
     Returns error_code SLOT_TAKEN (non-retryable) if the slot went busy in the interim (FR-5.5), and
     INVALID_DURATION / OUTSIDE_BUSINESS_HOURS / SLOT_IN_PAST / MALFORMED_TIME if the slot breaks the
     booking rules (30 minutes, weekday business hours, in the future).
     """
+    # check-then-insert must be atomic, or two simultaneous visitors can both pass the check (FR-5.5)
+    with _BOOK_LOCK:
+        return _create_event(start_iso, end_iso, visitor_email, visitor_name, notes,
+                             idempotency_key, manage_url)
+
+
+def _create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name: str,
+                  notes: str, idempotency_key: str, manage_url: str) -> dict:
     _fail_if_simulating()
     try:
         start, end = _check_slot(start_iso, end_iso)
     except SlotRuleError as exc:
         return _rule_error(exc)
+
+    key = idempotency_key or hashlib.sha256((visitor_email + start_iso).encode()).hexdigest()[:24]
+
+    # idempotency first: a retried create finds its own event and returns it - checked before the
+    # availability test, which that same event would otherwise fail as "slot taken"
+    existing = service().events().list(
+        calendarId=settings.GOOGLE_CALENDAR_ID, privateExtendedProperty=f"idem={key}",
+        timeMin=(start - timedelta(days=1)).isoformat(), maxResults=1,
+    ).execute().get("items", [])
+    if existing and existing[0].get("status") != "cancelled":
+        ev = existing[0]
+        return {"status": "ok", "duplicate": True, "event_id": ev["id"],
+                "meet_link": ev.get("hangoutLink"), "html_link": ev.get("htmlLink"),
+                "start": ev["start"]["dateTime"], "end": ev["end"]["dateTime"]}
 
     # FR-5.5: re-check immediately before insert, not only at conversation start.
     for b_start, b_end in _busy(start - timedelta(minutes=1), end + timedelta(minutes=1)):
@@ -145,22 +181,9 @@ def create_event(start_iso: str, end_iso: str, visitor_email: str, visitor_name:
             return {"status": "error", "error_code": "SLOT_TAKEN", "retryable": False,
                     "message": "That slot was just taken.", "agent": "calendar_mcp"}
 
-    key = idempotency_key or hashlib.sha256((visitor_email + start_iso).encode()).hexdigest()[:24]
-
-    # idempotency: an event with the same key already exists -> return it instead of duplicating
-    existing = service().events().list(
-        calendarId=settings.GOOGLE_CALENDAR_ID, privateExtendedProperty=f"idem={key}",
-        timeMin=(start - timedelta(days=1)).isoformat(), maxResults=1,
-    ).execute().get("items", [])
-    if existing:
-        ev = existing[0]
-        return {"status": "ok", "duplicate": True, "event_id": ev["id"],
-                "meet_link": ev.get("hangoutLink"), "html_link": ev.get("htmlLink"),
-                "start": ev["start"]["dateTime"], "end": ev["end"]["dateTime"]}
-
     body = {
         "summary": f"CloseFuture discovery call - {visitor_name}",
-        "description": (notes or "Discovery call booked via the CloseFuture website assistant."),
+        "description": _description(notes, manage_url),
         "start": {"dateTime": start.isoformat(), "timeZone": settings.CALENDAR_OWNER_TZ},
         "end": {"dateTime": end.isoformat(), "timeZone": settings.CALENDAR_OWNER_TZ},
         "attendees": [{"email": visitor_email, "displayName": visitor_name}],
@@ -191,8 +214,14 @@ def modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
     """Move an existing booking to a new time (FR-5.8). Never creates a second event.
 
     Same rules as create_event: a valid 30-minute business-hours slot that is free (the booking being
-    moved does not count against itself).
+    moved does not count against itself). Shares the booking lock, so a move and a new booking can't
+    both claim the same free slot.
     """
+    with _BOOK_LOCK:
+        return _modify_event(event_id, new_start_iso, new_end_iso)
+
+
+def _modify_event(event_id: str, new_start_iso: str, new_end_iso: str) -> dict:
     _fail_if_simulating()
     try:
         start, end = _check_slot(new_start_iso, new_end_iso)
