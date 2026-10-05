@@ -43,7 +43,7 @@ def service():
         else:
             info = json.loads(base64.b64decode(settings.GOOGLE_SERVICE_ACCOUNT_JSON))
             creds = service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
-            subject = os.getenv("GOOGLE_IMPERSONATE_USER")
+            subject = settings.GOOGLE_IMPERSONATE_USER
             if subject:
                 creds = creds.with_subject(subject)
         _service = build("calendar", "v3", credentials=creds, cache_discovery=False)
@@ -55,6 +55,24 @@ def _fail_if_simulating():
         raise RuntimeError("HTTP 503: calendar backend unavailable (simulated)")
     if os.getenv("SIMULATE_CALENDAR_AUTH_FAILURE") == "1":
         raise RuntimeError("HTTP 401: invalid credentials (simulated)")
+
+
+def _auth_mode() -> str:
+    if settings.GOOGLE_OAUTH_REFRESH_TOKEN:
+        return "oauth_owner"
+    return "service_account_delegated" if settings.GOOGLE_IMPERSONATE_USER else "service_account_plain"
+
+
+@mcp.tool()
+def calendar_health() -> dict:
+    """Report the credentials this RUNNING server holds, so a stale process can be spotted.
+
+    The server caches its Google client at first use, so editing .env does nothing until it is
+    restarted. scripts/verify_calendar.py compares this with .env.
+    """
+    sim = [f for f in ("SIMULATE_CALENDAR_OUTAGE", "SIMULATE_CALENDAR_AUTH_FAILURE") if os.getenv(f) == "1"]
+    return {"status": "ok", "auth_mode": _auth_mode(), "calendar_id": settings.GOOGLE_CALENDAR_ID,
+            "simulating": sim or None}
 
 
 def _check_slot(start_iso: str, end_iso: str) -> tuple[datetime, datetime]:

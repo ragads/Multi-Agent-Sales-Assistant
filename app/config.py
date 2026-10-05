@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     GOOGLE_OAUTH_CLIENT_ID: str = ""
     GOOGLE_OAUTH_CLIENT_SECRET: str = ""
     GOOGLE_OAUTH_REFRESH_TOKEN: str = ""
+    # Google Workspace only: domain-wide delegation, impersonating this user (README 2.2, Option B)
+    GOOGLE_IMPERSONATE_USER: str = ""
     CALENDAR_OWNER_TZ: str = "Asia/Kolkata"
     BUSINESS_HOURS: str = "10:00-18:00"
     SLOT_MINUTES: int = 30
