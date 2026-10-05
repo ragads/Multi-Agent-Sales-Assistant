@@ -304,3 +304,50 @@ how concurrent visitors are kept in separate sessions are explained in **ARCHITE
 | Resend 403 | Sending domain not verified - use `onboarding@resend.dev` while testing |
 | Bot declines everything | The corpus was never ingested; run `python -m app.rag.ingest` |
 | asyncpg SSL/pooler errors | Use the session-pooler URI from Supabase, and keep `statement_cache_size=0` (already set) |
+
+---
+
+## 8. Deploying (free)
+
+The app is one container running three processes (API + two MCP servers), see `start.sh`. It needs to
+stay awake because the idle sweeper (abandoned-lead emails) runs inside the API.
+
+**Render (free web service, no card).** `render.yaml` in the repo root is a Blueprint: Dashboard ->
+**New** -> **Blueprint** -> connect this repo. Render creates the Docker web service and prompts for
+every secret (everything marked `sync: false`); the non-secret settings are already in the file.
+
+After the first deploy:
+
+1. Set `APP_BASE_URL` to the URL Render assigns, including the scheme
+   (`https://closefuture-agent.onrender.com`), then redeploy. It drives CORS and the signed links in
+   the lead email and calendar invite.
+2. Set `SUPABASE_ADMIN_DB_URL`: the background jobs that scan every session (idle sweep, expiry,
+   email queue) use it. The request path never does - it runs as the RLS-scoped app role.
+
+Run the files in `sql/` against the database once, in numerical order (001-006), before the first
+deploy, and ingest the knowledge base from your machine with `python -m app.rag.ingest`.
+
+Free instances sleep after 15 idle minutes, so add a free UptimeRobot / cron-job.org monitor hitting
+`https://<your-app>.onrender.com/health` every 5 minutes to keep the sweeper alive.
+
+---
+
+## 9. Security notes
+
+- **Database:** the app connects as the non-owner `closefuture_app` role; row-level security scopes
+  every row to the current visitor/session (`sql/003`-`005`, context set per query in
+  `app/state/store.py`). `anon`, `authenticated` and `service_role` have no access to the app tables.
+- **Conversation pages** (`/session/{id}`, `/api/session/{id}`, `/api/trace/{id}`) need either the
+  signed `?t=` link from the lead email or the `X-Admin-Token` header. Admin actions
+  (`/api/session/{id}/end`, `/api/mcp/reload`) need `X-Admin-Token`; they are disabled if
+  `ADMIN_TOKEN` is blank. The booking page accepts only a booking-purpose signature.
+- **MCP servers** require a per-server bearer token and bind to localhost (DECISIONS.md, decision 15).
+- **Abuse limits:** per-visitor, per-IP and a global daily cap on chat turns (`RATE_*` settings),
+  1500-character messages, and CORS limited to `APP_BASE_URL` plus `ALLOWED_ORIGINS` (add your
+  website there).
+- **Lead email:** every visitor-supplied value is HTML-escaped; link tokens are stripped from logs.
+- **Retention:** sessions expire after `SESSION_EXPIRY_DAYS` of inactivity; expiry deletes messages
+  and logs and scrubs names/emails (`expire_sessions()` in `sql/005`).
+- Generate `APP_SECRET` and `ADMIN_TOKEN` with
+  `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+
