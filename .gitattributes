@@ -1,0 +1,6 @@
+# Developed on Windows, deployed to Linux containers. core.autocrlf is on here, and a
+# stray carriage return in start.sh makes the container die with `$'\r': not found`.
+*.sh    text eol=lf
+Dockerfile text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf

@@ -6,6 +6,7 @@ asyncpg==0.30.0
 httpx==0.28.1
 openai==1.59.5
 fastmcp==2.3.4
+mcp==1.12.4
 google-api-python-client==2.157.0
 google-auth==2.37.0
 google-auth-oauthlib==1.2.1
