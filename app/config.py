@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     MCP_EMAIL_TOKEN: str
     MCP_BIND_HOST: str = "127.0.0.1"   # docker-compose overrides this to 0.0.0.0 on the internal network
 
+    # Access control (see app/security.py)
+    APP_SECRET: str = ""            # signs conversation links; falls back to a DB-password hash
+    ADMIN_TOKEN: str = ""           # required for admin endpoints and unsigned trace access; blank = disabled
+    ALLOWED_ORIGINS: str = ""       # extra comma-separated origins allowed to call the API (your website)
+    RATE_VISITOR_PER_MIN: int = 8
+    RATE_VISITOR_PER_DAY: int = 120
+    RATE_IP_PER_MIN: int = 30
+    RATE_GLOBAL_PER_DAY: int = 1500  # hard stop on total chat turns - protects the model budget
+
     # Session lease lock (see DECISIONS.md, decision 6)
     SESSION_LOCK_TTL_S: float = 60.0
     SESSION_LOCK_WAIT_S: float = 45.0
@@ -73,7 +82,10 @@ class Settings(BaseSettings):
     CHUNK_CHARS: int = 700
     CHUNK_OVERLAP: int = 120
     TOP_K: int = 6
-    MIN_SIMILARITY: float = 0.35
+    # OpenAI text-embedding-3-small: 0.35 threw away the pricing passage for "how much does it cost"
+    # (it ranks first at ~0.27), so the floor only excludes noise (off-topic ~0.10). Gemini embeddings
+    # score higher across the board - set MIN_SIMILARITY=0.60 there (see DECISIONS.md, decision 11).
+    MIN_SIMILARITY: float = 0.25
     CONFIDENCE_FLOOR: float = 0.45
     INTENT_CONFIDENCE_FLOOR: float = 0.60
 
@@ -110,6 +122,12 @@ class Settings(BaseSettings):
         if self.LLM_BASE_URL:
             kw["base_url"] = self.LLM_BASE_URL
         return kw
+
+    @property
+    def cors_origins(self) -> list[str]:
+        base = [self.APP_BASE_URL.rstrip("/"), "http://localhost:8000", "http://127.0.0.1:8000"]
+        extra = [o.strip().rstrip("/") for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
+        return list(dict.fromkeys(base + extra))
 
     @property
     def langfuse_enabled(self) -> bool:

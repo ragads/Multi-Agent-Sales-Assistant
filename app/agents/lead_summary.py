@@ -19,6 +19,7 @@ from app.mcp_client import hub
 from app.observability.logger import log_event, timer
 from app.reliability.retry import ToolFailure
 from app.scoring import score_lead
+from app.security import trace_link
 from app.state.store import store
 
 AGENT = "lead_summary"
@@ -98,7 +99,7 @@ async def build_summary(req: AgentRequest, complete_flag: bool) -> dict:
                     "meet_link": booking.get("meet_link"),
                     "manual_followup": bool(booking.get("manual_followup"))},
         "complete": complete_flag,
-        "conversation_url": f"{settings.APP_BASE_URL}/session/{req.session_id}",
+        "conversation_url": trace_link(req.session_id),   # signed: opens the trace for sales only
         "next_step": data.get("next_step") or "Follow up by email.",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
