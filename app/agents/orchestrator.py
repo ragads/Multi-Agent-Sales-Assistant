@@ -342,9 +342,19 @@ class Orchestrator:
             s1 = await self._call_agent(
                 search.run, req.model_copy(update={"params": {**req.params, "booking_handled_separately": True}}),
                 "search")
-            # ...and the Scheduler handles only the booking half, so it never answers the question itself
+            # ...and the Scheduler sees ONLY the booking half. A note telling it to ignore the question
+            # was not enough: shown the whole message, the model still answered it ("4 to 8 weeks").
+            # So the question is removed from its input, rebuilt from the classifier's booking intent.
+            sched = next((i for i in intents if i["intent"] in sched_intents), {})
+            detail = ", ".join(str(v) for v in (sched.get("payload") or {}).values() if isinstance(v, str) and v)
+            booking_msg = {"schedule": "I'd like to book a discovery call",
+                           "reschedule": "I'd like to move my booked call",
+                           "cancel": "I'd like to cancel my booked call"}[sched.get("intent", "schedule")]
+            booking_msg += f" ({detail})." if detail else "."
             s2 = await self._call_agent(
-                scheduler.run, req.model_copy(update={"params": {**req.params, "question_handled_separately": True}}),
+                scheduler.run, req.model_copy(update={
+                    "message": booking_msg,
+                    "params": {**req.params, "question_handled_separately": True}}),
                 "scheduler")
             decision["chosen_agents"] = ["search", "scheduler"]
             slots = s2.output.get("slots", []) if s2.output else []

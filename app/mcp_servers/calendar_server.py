@@ -86,6 +86,15 @@ def _rule_error(exc: SlotRuleError) -> dict:
             "message": str(exc), "agent": "calendar_mcp"}
 
 
+def _unreachable(exc: Exception) -> dict:
+    """A structured, retryable error naming the real cause (timeout, DNS, Google 5xx...), instead of
+    FastMCP's generic "Error calling tool", so the trace says why the calendar was unreachable."""
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    retryable = status is None or status in (408, 429, 500, 502, 503, 504)
+    return {"status": "error", "error_code": f"CALENDAR_{status}" if status else "CALENDAR_UNREACHABLE",
+            "retryable": retryable, "message": f"{type(exc).__name__}: {exc}"[:300], "agent": "calendar_mcp"}
+
+
 def _busy(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
     body = {
         "timeMin": start.isoformat(), "timeMax": end.isoformat(),
@@ -104,7 +113,10 @@ def check_availability(start_iso: str, end_iso: str) -> dict:
     _fail_if_simulating()
     start = datetime.fromisoformat(start_iso)
     end = datetime.fromisoformat(end_iso)
-    busy = _busy(start, end)
+    try:
+        busy = _busy(start, end)
+    except Exception as exc:  # noqa: BLE001
+        return _unreachable(exc)
     return {"status": "ok", "busy": [{"start": b.isoformat(), "end": e.isoformat()} for b, e in busy]}
 
 
@@ -123,7 +135,10 @@ def propose_slots(visitor_tz: str, days_ahead: int = 5, count: int = 3) -> dict:
 
     now = datetime.now(owner_tz) + timedelta(hours=2)
     window_end = now + timedelta(days=days_ahead)
-    busy = _busy(now, window_end)
+    try:
+        busy = _busy(now, window_end)
+    except Exception as exc:  # noqa: BLE001
+        return _unreachable(exc)
 
     slots, cursor = [], now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     step = timedelta(minutes=settings.SLOT_MINUTES)

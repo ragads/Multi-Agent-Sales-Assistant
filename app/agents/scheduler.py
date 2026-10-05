@@ -93,8 +93,14 @@ async def run(req: AgentRequest) -> AgentResponse:
             f"Existing booking: {json.dumps(booking) if booking else 'none'}\n"
             f"Now: {datetime.now().isoformat(timespec='minutes')}"
         )
+        # The Orchestrator saves the visitor's message before routing, so the last history entry IS the
+        # current message: drop it, and send req.message once - which, in a question-plus-booking turn,
+        # is the booking half only.
+        past = req.state.recent(9)
+        if past and past[-1]["role"] == "visitor":
+            past = past[:-1]
         history = [{"role": "assistant" if m["role"] != "visitor" else "user", "content": m["content"]}
-                   for m in req.state.recent(8)]
+                   for m in past[-8:]]
         messages = history + [{"role": "user", "content": req.message or ""}]
 
         raw_tools = hub.schemas_for(CAL_TOOLS)
