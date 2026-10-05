@@ -32,7 +32,9 @@ LEAK_PATTERNS = [
     r"lead[_ ]score", r"qualification tier", r"routing (decision|reason)",
     r"chunk|embedding|vector store|pgvector", r"system prompt", r"tool call",
 ]
-EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+# Domain labels only - a sentence-ending full stop is not part of the address. The old pattern
+# matched "you@gmail.com." and so flagged the visitor's own email as a stranger's.
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
 FALLBACKS = {
     "prompt_injection": ("I can only help with questions about CloseFuture - our services, past work, "

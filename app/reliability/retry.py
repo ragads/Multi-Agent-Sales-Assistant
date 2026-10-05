@@ -1,6 +1,6 @@
 """Retry classification and backoff (FR-8.2, FR-8.5)."""
 from __future__ import annotations
-import asyncio, random
+import asyncio, random, re
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -9,6 +9,19 @@ from app.contracts import AgentError
 
 RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504}
 NON_RETRYABLE_STATUS = {400, 401, 403, 404, 405, 409, 422}
+
+# Longest we'll wait on a provider's "retry in Ns" before giving up and falling back. Free tiers cap
+# requests per minute (Gemini: 15), so the advised wait is usually under a minute.
+MAX_RATE_LIMIT_WAIT_S = 45.0
+_RETRY_IN = re.compile(r"retry in ([\d.]+)\s*s|retryDelay'?\"?:\s*'?\"?(\d+(?:\.\d+)?)s", re.I)
+
+
+def retry_after(error: AgentError) -> float | None:
+    """Seconds a rate-limited (429) provider asked us to wait, if it said."""
+    if "429" not in error.error_code and "429" not in error.message[:40]:
+        return None
+    m = _RETRY_IN.search(error.message)
+    return float(m.group(1) or m.group(2)) if m else None
 
 
 class ToolFailure(Exception):
@@ -64,7 +77,11 @@ async def with_retry(
                                          "retryable": last.retryable, "message": last.message[:300]})
             if not last.retryable or attempt == attempts:
                 break
-            await asyncio.sleep(base_delay * (2 ** (attempt - 1)) + random.uniform(0, 0.3))
+            delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0, 0.3)
+            wait = retry_after(last)
+            if wait is not None:   # a rate limit says when to come back; 1s/2s/4s would just be refused again
+                delay = min(wait + random.uniform(0.5, 1.5), MAX_RATE_LIMIT_WAIT_S)
+            await asyncio.sleep(delay)
 
     if trace_id:
         await log_event("retry", trace_id=trace_id, session_id=session_id, agent=agent,

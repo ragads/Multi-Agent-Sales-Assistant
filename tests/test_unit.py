@@ -144,3 +144,17 @@ def test_booking_email_must_come_from_the_visitor():
     assert not email_given_by_visitor("dan@acme.com", said)            # model guessed the domain
     assert not email_given_by_visitor("not-an-email", said)
     assert email_given_by_visitor("maya@x.io", [], known_email="maya@x.io")
+
+
+def test_rate_limit_wait_is_read_from_the_provider():
+    from app.contracts import AgentError
+    from app.reliability.retry import retry_after
+    gemini = AgentError(error_code="UPSTREAM_429", retryable=True, agent="llm",
+                        message="Error code: 429 - quota exceeded ... Please retry in 41.03s.")
+    assert retry_after(gemini) == 41.03
+    assert retry_after(AgentError(error_code="UPSTREAM_503", message="down", retryable=True, agent="t")) is None
+
+
+def test_email_pattern_ignores_a_trailing_full_stop():
+    from app.agents.guardrail import EMAIL_RE
+    assert EMAIL_RE.findall("The invite is on its way to you@gmail.com.") == ["you@gmail.com"]
